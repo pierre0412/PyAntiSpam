@@ -1,0 +1,339 @@
+{
+  "exported_at": "2025-09-18T13:09:13.160801",
+  "summary": {
+    "overview": {
+      "total_emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "spam_detection_rate": 0
+    },
+    "detection_methods": {
+      "whitelist": 0,
+      "blacklist": 0,
+      "ml_random_forest": 0,
+      "llm_openai": 0,
+      "llm_anthropic": 0,
+      "default": 0
+    },
+    "confidence_distribution": {
+      "high": 0,
+      "medium": 0,
+      "low": 0
+    },
+    "learning": {
+      "total_feedback": 2,
+      "whitelist_additions": 0,
+      "blacklist_additions": 0,
+      "ml_training_samples": 2,
+      "ml_retraining_count": 0,
+      "feedback_by_type": {
+        "whitelist": 0,
+        "blacklist": 0,
+        "not_spam": 0,
+        "is_spam": 0
+      }
+    },
+    "performance": {
+      "avg_processing_time": 0.0,
+      "errors_count": 0,
+      "last_error_date": null
+    }
+  },
+  "daily_stats": {
+    "2025-09-18": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 2,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-17": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-16": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-15": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-14": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-13": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-12": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-11": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-10": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-09": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-08": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-07": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-06": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-05": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-04": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-03": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-02": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-09-01": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-31": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-30": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-29": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-28": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-27": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-26": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-25": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-24": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-23": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-22": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-21": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    },
+    "2025-08-20": {
+      "emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "feedback_processed": 0,
+      "methods_used": {},
+      "errors": 0
+    }
+  },
+  "effectiveness": {
+    "error": "No detection data available"
+  },
+  "raw_stats": {
+    "detection": {
+      "total_emails_processed": 0,
+      "spam_detected": 0,
+      "ham_detected": 0,
+      "detection_methods": {
+        "whitelist": 0,
+        "blacklist": 0,
+        "ml_random_forest": 0,
+        "llm_openai": 0,
+        "llm_anthropic": 0,
+        "default": 0
+      },
+      "confidence_distribution": {
+        "high": 0,
+        "medium": 0,
+        "low": 0
+      }
+    },
+    "learning": {
+      "total_feedback": 2,
+      "whitelist_additions": 0,
+      "blacklist_additions": 0,
+      "ml_training_samples": 2,
+      "ml_retraining_count": 0,
+      "last_retrain_date": null,
+      "feedback_by_type": {
+        "whitelist": 0,
+        "blacklist": 0,
+        "not_spam": 0,
+        "is_spam": 0
+      }
+    },
+    "performance": {
+      "processing_times": [],
+      "avg_processing_time": 0.0,
+      "errors_count": 0,
+      "last_error_date": null
+    },
+    "daily_stats": {
+      "2025-09-18": {
+        "emails_processed": 0,
+        "spam_detected": 0,
+        "ham_detected": 0,
+        "feedback_processed": 2,
+        "methods_used": {},
+        "errors": 0
+      }
+    },
+    "last_updated": "2025-09-18T13:08:25.741649",
+    "version": "1.0"
+  }
+}

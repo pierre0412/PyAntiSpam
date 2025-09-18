@@ -1,0 +1,42 @@
+# PyAntiSpam Configuration Example
+# Copy to config.yaml and customize
+
+# LLM Configuration
+llm:
+  provider: "openai"  # openai, anthropic, ollama
+  model: "gpt-4o-mini"
+  api_key_env: "OPENAI_API_KEY"  # Environment variable name
+  # For Anthropic: model: "claude-3-haiku-20240307", api_key_env: "ANTHROPIC_API_KEY"
+
+# Email Accounts Configuration
+email_accounts:
+  - name: "personal"
+    server: "imap.gmail.com"
+    port: 993
+    username: "your-email@gmail.com"
+    password_env: "EMAIL_PASSWORD_PERSONAL"
+    use_ssl: true
+
+  # - name: "work"
+  #   server: "outlook.office365.com"
+  #   port: 993
+  #   username: "your-work@company.com"
+  #   password_env: "EMAIL_PASSWORD_WORK"
+  #   use_ssl: true
+
+# Spam Detection Settings
+detection:
+  ml_confidence_threshold: 0.8  # Threshold for ML model certainty
+  use_llm_for_uncertain: true   # Use LLM for uncertain cases
+
+# Action Settings
+actions:
+  move_spam_to_folder: "SPAM_AUTO"  # Folder name to move spam
+  auto_delete_after_days: 30        # Auto-delete spam after N days (0 = never)
+
+# Logging Settings
+logging:
+  log_decisions: true
+  log_file: "spam_decisions.log"
+  keep_logs_days: 90
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR

@@ -1,0 +1,17 @@
+README.md
+pyproject.toml
+src/pyantispam/__init__.py
+src/pyantispam/cli.py
+src/pyantispam.egg-info/PKG-INFO
+src/pyantispam.egg-info/SOURCES.txt
+src/pyantispam.egg-info/dependency_links.txt
+src/pyantispam.egg-info/entry_points.txt
+src/pyantispam.egg-info/requires.txt
+src/pyantispam.egg-info/top_level.txt
+src/pyantispam/config/__init__.py
+src/pyantispam/config/config_manager.py
+src/pyantispam/email/__init__.py
+src/pyantispam/email/email_client.py
+src/pyantispam/email/email_processor.py
+src/pyantispam/filters/__init__.py
+src/pyantispam/filters/list_manager.py

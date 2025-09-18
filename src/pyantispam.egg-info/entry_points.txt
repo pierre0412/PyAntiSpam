@@ -1,0 +1,2 @@
+[console_scripts]
+pyantispam = pyantispam.cli:main

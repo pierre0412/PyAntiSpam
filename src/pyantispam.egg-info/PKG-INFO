@@ -1,0 +1,140 @@
+Metadata-Version: 2.4
+Name: pyantispam
+Version: 0.1.0
+Summary: Intelligent email spam detection and filtering system
+Author-email: Pierre <pierre@example.com>
+Project-URL: Homepage, https://github.com/pierre/pyantispam
+Project-URL: Repository, https://github.com/pierre/pyantispam
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: End Users/Desktop
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: click>=8.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: email-validator>=2.0.0
+Requires-Dist: scikit-learn>=1.3.0
+Requires-Dist: openai>=1.0.0
+Requires-Dist: anthropic>=0.7.0
+Requires-Dist: requests>=2.31.0
+
+# PyAntiSpam
+
+Système intelligent de détection et filtrage automatique des spams par email.
+
+## Fonctionnalités
+
+- **Détection intelligente** : combinaison ML + LLM pour s'adapter aux nouveaux spams
+- **Gestion de listes** : whitelist/blacklist pour contrôle manuel
+- **Multi-comptes** : support de plusieurs boîtes email
+- **Mode autonome** : fonctionne en arrière-plan sans intervention
+- **Logging complet** : traçabilité de toutes les décisions
+
+## Installation
+
+```bash
+# Cloner le projet
+git clone <repo-url>
+cd PyAntiSpam
+
+# Créer environnement virtuel
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# ou venv\Scripts\activate  # Windows
+
+# Installer les dépendances
+pip install -e .
+```
+
+## Configuration
+
+```bash
+# Configuration initiale
+pyantispam setup
+
+# Éditer la configuration
+nano config.yaml
+
+# Éditer les credentials
+nano .env
+
+# Tester la configuration
+pyantispam test-config
+```
+
+## Utilisation
+
+### Commandes principales
+
+```bash
+# Scan unique
+pyantispam run
+
+# Mode daemon (continu)
+pyantispam daemon
+
+# Scan d'un compte spécifique
+pyantispam run --account personal
+
+# Mode dry-run (test)
+pyantispam run --dry-run
+```
+
+### Gestion des listes
+
+```bash
+# Whitelist
+pyantispam whitelist add important@company.com
+pyantispam whitelist add trusted-domain.com
+pyantispam whitelist list
+
+# Blacklist
+pyantispam blacklist add spam@evil.com
+pyantispam blacklist add bad-domain.com
+pyantispam blacklist list
+```
+
+### Monitoring
+
+```bash
+# Statut général
+pyantispam status
+
+# Logs récents
+pyantispam logs --days 7
+```
+
+## Architecture
+
+```
+├── src/pyantispam/
+│   ├── config/          # Gestion configuration
+│   ├── email/           # Client IMAP et traitement
+│   ├── filters/         # Whitelist/blacklist
+│   ├── ml/              # Modèles ML (à implémenter)
+│   ├── llm/             # Intégration LLM (à implémenter)
+│   └── logging/         # Système de logs (à implémenter)
+├── data/                # Données persistantes
+├── config.yaml          # Configuration principale
+└── .env                 # Variables d'environnement
+```
+
+## Développement
+
+Le projet est structuré pour faciliter l'ajout de nouvelles fonctionnalités :
+
+- **ML** : ajout de modèles de classification
+- **LLM** : intégration avec différents providers
+- **Plugins** : filtres personnalisés
+- **Interfaces** : web UI ou API REST
+
+## Licence
+
+MIT
