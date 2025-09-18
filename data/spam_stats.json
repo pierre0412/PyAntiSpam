@@ -1,18 +1,18 @@
 {
   "detection": {
-    "total_emails_processed": 1854,
+    "total_emails_processed": 1860,
     "spam_detected": 73,
-    "ham_detected": 1781,
+    "ham_detected": 1787,
     "detection_methods": {
-      "whitelist": 100,
+      "whitelist": 102,
       "blacklist": 0,
-      "ml_random_forest": 1259,
+      "ml_random_forest": 1263,
       "llm_openai": 495,
       "llm_anthropic": 0,
       "default": 0
     },
     "confidence_distribution": {
-      "high": 1471,
+      "high": 1477,
       "medium": 0,
       "low": 373
     }
@@ -33,12 +33,6 @@
   },
   "performance": {
     "processing_times": [
-      0.005981922149658203,
-      0.008333206176757812,
-      0.008748292922973633,
-      0.008566617965698242,
-      0.008033037185668945,
-      0.005661487579345703,
       0.008697271347045898,
       0.008343696594238281,
       0.008292913436889648,
@@ -1032,26 +1026,32 @@
       7.3909759521484375e-06,
       0.009266376495361328,
       0.009634017944335938,
-      8.344650268554688e-06
+      8.344650268554688e-06,
+      0.006932735443115234,
+      0.00941014289855957,
+      1.1682510375976562e-05,
+      0.009737730026245117,
+      0.008212089538574219,
+      1.0013580322265625e-05
     ],
-    "avg_processing_time": 0.05782054400444031,
+    "avg_processing_time": 0.057809533834457395,
     "errors_count": 21,
     "last_error_date": "2025-09-18T15:27:55.929295"
   },
   "daily_stats": {
     "2025-09-18": {
-      "emails_processed": 1854,
+      "emails_processed": 1860,
       "spam_detected": 73,
-      "ham_detected": 1781,
+      "ham_detected": 1787,
       "feedback_processed": 48,
       "methods_used": {
         "llm_openai": 490,
-        "ml_random_forest": 1254,
-        "whitelist": 100
+        "ml_random_forest": 1258,
+        "whitelist": 102
       },
       "errors": 21
     }
   },
-  "last_updated": "2025-09-18T16:32:58.667409",
+  "last_updated": "2025-09-18T16:43:03.582120",
   "version": "1.0"
 }
