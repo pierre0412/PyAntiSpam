@@ -76,7 +76,13 @@ class MLClassifier:
             probabilities = self.model.predict_proba(feature_vector_scaled)[0]
 
             # Get confidence (probability of predicted class)
-            confidence = probabilities[1] if prediction == 1 else probabilities[0]
+            # Handle cases where model was trained with only one class
+            if len(probabilities) == 1:
+                # Only one class available, use the single probability
+                confidence = probabilities[0]
+            else:
+                # Normal case with both classes
+                confidence = probabilities[1] if prediction == 1 else probabilities[0]
 
             # Determine action
             is_spam = prediction == 1

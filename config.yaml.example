@@ -7,6 +7,12 @@ llm:
   model: "gpt-4o-mini"
   api_key_env: "OPENAI_API_KEY"  # Environment variable name
   # For Anthropic: model: "claude-3-haiku-20240307", api_key_env: "ANTHROPIC_API_KEY"
+  
+  # LLM Cache Settings
+  cache:
+    enabled: true                    # Enable persistent LLM cache
+    file_path: "data/llm_cache.json" # Path to cache file
+    max_age_days: 30                # Auto-delete cache entries older than N days (0 = never)
 
 # Email Accounts Configuration
 email_accounts:
@@ -33,6 +39,10 @@ detection:
 actions:
   move_spam_to_folder: "SPAM_AUTO"  # Folder name to move spam
   auto_delete_after_days: 30        # Auto-delete spam after N days (0 = never)
+
+# Email Connection Settings
+email_connection:
+  request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
 
 # Logging Settings
 logging:

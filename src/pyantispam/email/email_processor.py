@@ -1,6 +1,11 @@
 """Email processor for spam detection workflow"""
 
 import logging
+import hashlib
+import json
+import os
+import time
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from ..config import ConfigManager
 from .email_client import EmailClient
@@ -22,6 +27,11 @@ class EmailProcessor:
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
+        self.llm_training_samples = []  # Collect LLM results for ML training
+        self.processed_emails_cache = {}  # Cache for processed email fingerprints
+        
+        # Load persistent LLM cache
+        self._load_cache()
 
     def initialize_clients(self) -> bool:
         """Initialize email clients for all configured accounts"""
@@ -30,12 +40,16 @@ class EmailProcessor:
         for account in accounts:
             name = account.get('name', 'unknown')
             try:
+                # Get request delay from config (default 0.1 seconds)
+                request_delay = self.config.config.get('email_connection', {}).get('request_delay', 0.1)
+                
                 client = EmailClient(
                     server=account['server'],
                     port=account['port'],
                     username=account['username'],
                     password=account['password'],
-                    use_ssl=account.get('use_ssl', True)
+                    use_ssl=account.get('use_ssl', True),
+                    request_delay=request_delay
                 )
 
                 if client.connect():
@@ -296,7 +310,27 @@ class EmailProcessor:
 
         # Step 3: LLM-based detection for uncertain cases
         if self.config.get("detection.use_llm_for_uncertain", True):
+            # Check if we've already processed this email
+            email_fingerprint = self._get_email_fingerprint(email_data)
+            
+            if email_fingerprint in self.processed_emails_cache:
+                cached_result = self.processed_emails_cache[email_fingerprint].copy()
+                cached_result["reason"] += " (cached)"
+                self.logger.debug(f"Using cached LLM result for email fingerprint: {email_fingerprint[:8]}...")
+                return cached_result
+            
+            # Get LLM classification for new email
             llm_result = self._llm_classify(email_data)
+            
+            # Cache the result for future use
+            self.processed_emails_cache[email_fingerprint] = llm_result.copy()
+            
+            # Save cache to disk
+            self._save_cache()
+            
+            # Collect LLM result as training data for ML model
+            self._collect_llm_training_sample(email_data, llm_result)
+            
             return llm_result
 
         # Default: keep email if uncertain
@@ -322,6 +356,52 @@ class EmailProcessor:
     def _llm_classify(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify email using LLM"""
         return self.llm_classifier.classify(email_data)
+
+    def _get_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
+        """Generate a unique fingerprint for an email based on its content"""
+        # Use sender, subject, and first 200 chars of body to create fingerprint
+        content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _collect_llm_training_sample(self, email_data: Dict[str, Any], llm_result: Dict[str, Any]):
+        """Collect LLM classification result as training data for ML model"""
+        try:
+            # Only collect high-confidence LLM results
+            if llm_result.get("confidence", 0) >= 0.7:
+                is_spam = llm_result.get("action") == "SPAM"
+                
+                # Create training sample in the format expected by MLClassifier
+                training_sample = {
+                    "email_data": email_data.copy(),
+                    "is_spam": is_spam
+                }
+                
+                self.llm_training_samples.append(training_sample)
+                self.logger.debug(f"Collected LLM training sample: spam={is_spam}, confidence={llm_result.get('confidence', 0):.2f}")
+                
+                # Retrain ML model periodically when we have enough samples
+                if len(self.llm_training_samples) >= 10:
+                    self._retrain_ml_with_llm_samples()
+                    
+        except Exception as e:
+            self.logger.error(f"Error collecting LLM training sample: {e}")
+
+    def _retrain_ml_with_llm_samples(self):
+        """Retrain ML model with collected LLM samples"""
+        try:
+            self.logger.info(f"Retraining ML model with {len(self.llm_training_samples)} LLM samples")
+            
+            result = self.ml_classifier.train_with_samples(self.llm_training_samples)
+            
+            if result["success"]:
+                self.logger.info(f"ML model retrained with LLM data. New accuracy: {result.get('accuracy', 'unknown'):.3f}")
+                # Clear samples after successful training
+                self.llm_training_samples.clear()
+            else:
+                self.logger.error(f"ML retraining with LLM samples failed: {result.get('error', 'unknown')}")
+                
+        except Exception as e:
+            self.logger.error(f"Error during ML retraining with LLM samples: {e}")
 
     def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any]) -> bool:
         """Handle detected spam email according to configuration"""
@@ -362,12 +442,16 @@ class EmailProcessor:
         for account in accounts:
             name = account.get('name', 'unknown')
             try:
+                # Get request delay from config (default 0.1 seconds)
+                request_delay = self.config.config.get('email_connection', {}).get('request_delay', 0.1)
+                
                 client = EmailClient(
                     server=account['server'],
                     port=account['port'],
                     username=account['username'],
                     password=account['password'],
-                    use_ssl=account.get('use_ssl', True)
+                    use_ssl=account.get('use_ssl', True),
+                    request_delay=request_delay
                 )
 
                 success = client.connect()
@@ -381,3 +465,85 @@ class EmailProcessor:
                 results[name] = False
 
         return results
+
+    def _load_cache(self):
+        """Load LLM cache from disk if enabled"""
+        try:
+            # Check if cache is enabled in config
+            cache_config = self.config.config.get('llm', {}).get('cache', {})
+            if not cache_config.get('enabled', True):
+                self.logger.debug("LLM cache is disabled in configuration")
+                return
+            
+            cache_file_path = cache_config.get('file_path', 'data/llm_cache.json')
+            
+            # Create data directory if it doesn't exist
+            cache_path = Path(cache_file_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            if cache_path.exists():
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                
+                # Load cache entries, optionally filtering by age
+                max_age_days = cache_config.get('max_age_days', 30)
+                current_time = time.time()
+                loaded_entries = 0
+                expired_entries = 0
+                
+                for email_fingerprint, cache_entry in cache_data.items():
+                    # Check if entry has timestamp and is not too old
+                    if max_age_days > 0 and 'timestamp' in cache_entry:
+                        entry_age_days = (current_time - cache_entry['timestamp']) / (24 * 3600)
+                        if entry_age_days > max_age_days:
+                            expired_entries += 1
+                            continue
+                    
+                    # Load the LLM result (remove timestamp for compatibility)
+                    llm_result = cache_entry.copy()
+                    llm_result.pop('timestamp', None)
+                    self.processed_emails_cache[email_fingerprint] = llm_result
+                    loaded_entries += 1
+                
+                self.logger.info(f"Loaded {loaded_entries} LLM cache entries from {cache_file_path}")
+                if expired_entries > 0:
+                    self.logger.info(f"Skipped {expired_entries} expired cache entries")
+            else:
+                self.logger.debug(f"No LLM cache file found at {cache_file_path}")
+                
+        except Exception as e:
+            self.logger.error(f"Error loading LLM cache: {e}")
+            # Continue with empty cache on error
+            self.processed_emails_cache = {}
+
+    def _save_cache(self):
+        """Save LLM cache to disk if enabled"""
+        try:
+            # Check if cache is enabled in config
+            cache_config = self.config.config.get('llm', {}).get('cache', {})
+            if not cache_config.get('enabled', True):
+                return
+            
+            cache_file_path = cache_config.get('file_path', 'data/llm_cache.json')
+            
+            # Create data directory if it doesn't exist
+            cache_path = Path(cache_file_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Prepare cache data with timestamps
+            current_time = time.time()
+            cache_data = {}
+            
+            for email_fingerprint, llm_result in self.processed_emails_cache.items():
+                cache_entry = llm_result.copy()
+                cache_entry['timestamp'] = current_time
+                cache_data[email_fingerprint] = cache_entry
+            
+            # Write cache to file
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+            
+            self.logger.debug(f"Saved {len(cache_data)} LLM cache entries to {cache_file_path}")
+            
+        except Exception as e:
+            self.logger.error(f"Error saving LLM cache: {e}")

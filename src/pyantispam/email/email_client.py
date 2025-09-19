@@ -3,6 +3,7 @@
 import imaplib
 import email
 import ssl
+import time
 from typing import List, Dict, Any, Optional, Tuple
 from email.message import EmailMessage
 import logging
@@ -11,7 +12,7 @@ import logging
 class EmailClient:
     """IMAP email client for spam detection operations"""
 
-    def __init__(self, server: str, port: int, username: str, password: str, use_ssl: bool = True):
+    def __init__(self, server: str, port: int, username: str, password: str, use_ssl: bool = True, request_delay: float = 0.1):
         self.server = server
         self.port = port
         self.username = username
@@ -20,6 +21,23 @@ class EmailClient:
         self.imap = None
         self.current_folder = "INBOX"
         self.logger = logging.getLogger(__name__)
+        self.request_delay = request_delay  # Delay between requests in seconds
+        self.last_request_time = 0
+
+    def _throttle_request(self):
+        """Enforce rate limiting by adding delays between requests"""
+        if self.request_delay <= 0:
+            return
+            
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        
+        if time_since_last < self.request_delay:
+            sleep_time = self.request_delay - time_since_last
+            self.logger.debug(f"Rate limiting: sleeping {sleep_time:.3f}s")
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
 
     def connect(self) -> bool:
         """Connect to the IMAP server"""
@@ -44,11 +62,41 @@ class EmailClient:
         """Disconnect from the IMAP server"""
         if self.imap:
             try:
+                # First try to close the connection gracefully
+                self.imap.close()
+            except Exception as e:
+                # Ignore close errors, we'll still try logout
+                self.logger.debug(f"Error during close: {e}")
+            
+            try:
+                # Try to logout normally
                 self.imap.logout()
                 self.logger.info(f"Disconnected from {self.server}")
+            except (ssl.SSLError, OSError) as e:
+                # Handle SSL-specific errors and broken pipe errors gracefully
+                if "BAD_LENGTH" in str(e) or "bad length" in str(e).lower():
+                    self.logger.debug(f"SSL disconnect issue handled gracefully: {e}")
+                elif hasattr(e, 'errno') and e.errno == 32:  # Broken pipe
+                    self.logger.debug(f"Broken pipe during disconnect handled gracefully: {e}")
+                elif "Broken pipe" in str(e) or "[Errno 32]" in str(e):
+                    self.logger.debug(f"Broken pipe during disconnect handled gracefully: {e}")
+                else:
+                    self.logger.warning(f"Socket error during disconnect: {e}")
             except Exception as e:
-                self.logger.warning(f"Error during disconnect: {e}")
+                # Check if this is a broken pipe error that wasn't caught by the OSError handler
+                if (hasattr(e, 'errno') and e.errno == 32) or \
+                   "Broken pipe" in str(e) or "[Errno 32]" in str(e) or \
+                   "broken pipe" in str(e).lower():
+                    self.logger.debug(f"Broken pipe during disconnect handled gracefully: {e}")
+                else:
+                    self.logger.warning(f"Error during disconnect: {e}")
             finally:
+                # Ensure the connection is cleaned up
+                try:
+                    if hasattr(self.imap, 'sock') and self.imap.sock:
+                        self.imap.sock.close()
+                except Exception:
+                    pass  # Ignore socket cleanup errors
                 self.imap = None
 
     def select_folder(self, folder: str = "INBOX") -> bool:
@@ -57,6 +105,7 @@ class EmailClient:
             raise ConnectionError("Not connected to IMAP server")
 
         try:
+            self._throttle_request()
             status, data = self.imap.select(folder)
             if status == "OK":
                 self.current_folder = folder
@@ -80,6 +129,7 @@ class EmailClient:
             raise ConnectionError("Not connected to IMAP server")
 
         try:
+            self._throttle_request()
             status, data = self.imap.search(None, search_criteria)
             if status == "OK":
                 email_ids = data[0].split()
@@ -105,6 +155,7 @@ class EmailClient:
             # Check if email was unread before fetching (this preserves the status)
             was_unread = self.is_email_unread(email_id)
 
+            self._throttle_request()
             status, data = self.imap.fetch(email_id, "(RFC822)")
             if status != "OK":
                 self.logger.warning(f"Email {email_id} no longer exists or is invalid")
@@ -324,6 +375,7 @@ class EmailClient:
             return False
 
         try:
+            self._throttle_request()
             status, data = self.imap.fetch(email_id, "(FLAGS)")
             if status == "OK" and data and data[0]:
                 flags_response = data[0].decode()
@@ -340,6 +392,7 @@ class EmailClient:
             return False
 
         try:
+            self._throttle_request()
             status, data = self.imap.store(email_id, "-FLAGS", "\\Seen")
             if status == "OK":
                 self.logger.debug(f"Marked email {email_id} as unread")
@@ -357,6 +410,7 @@ class EmailClient:
             return False
 
         try:
+            self._throttle_request()
             status, data = self.imap.store(email_id, "+FLAGS", "\\Seen")
             if status == "OK":
                 self.logger.debug(f"Marked email {email_id} as read")
@@ -375,10 +429,12 @@ class EmailClient:
 
         try:
             # First, get the current folder status
+            self._throttle_request()
             status, data = self.imap.status(self.current_folder, "(MESSAGES)")
             if status != "OK":
                 self.logger.warning(f"Could not get folder status: {data}")
 
+            self._throttle_request()
             status, data = self.imap.search(None, search_criteria)
             if status == "OK":
                 email_ids = data[0].split()
