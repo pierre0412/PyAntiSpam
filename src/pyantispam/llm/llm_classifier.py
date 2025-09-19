@@ -111,7 +111,7 @@ class LLMClassifier:
     def _classify_with_openai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify using OpenAI API"""
         try:
-            model = self.config.get("llm.openai_model", "gpt-3.5-turbo")
+            model = self.config.get("llm.openai_model", "gpt-4o-mini")
 
             system_prompt = """You are a spam detection expert. Analyze the email and determine if it's spam.
 

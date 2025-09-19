@@ -4,3 +4,8 @@ __pycache__/
 CLAUDE.md
 config.yaml
 data/
+.claude/
+.idea/
+debug_features.py
+reproduce_error.py
+test_*.py
