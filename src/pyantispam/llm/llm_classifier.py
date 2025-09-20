@@ -111,29 +111,25 @@ class LLMClassifier:
     def _classify_with_openai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify using OpenAI API"""
         try:
-            model = self.config.get("llm.openai_model", "gpt-4o-mini")
+            model = self.config.get("llm.openai_model", "gpt-5-nano")
 
-            system_prompt = """You are a spam detection expert. Analyze the email and determine if it's spam.
-
-IMPORTANT: Return ONLY a valid JSON object, nothing else. Do not use markdown code blocks or any other formatting.
-
-Return JSON with these exact fields:
-- "is_spam": boolean (true if spam, false if legitimate)
-- "confidence": float between 0.0 and 1.0
-- "reason": string explaining the decision
-
-Consider these spam indicators:
-- Suspicious sender addresses or domains
-- Typical spam subject lines (get rich quick, urgent action, etc.)
-- Phishing attempts
-- Malicious links or attachments
-- Poor grammar/spelling
-- Excessive urgency or threats
-- Requests for personal information
-
-Example response: {"is_spam": false, "confidence": 0.8, "reason": "Legitimate email from trusted domain"}"""
-
-            user_prompt = f"Analyze this email:\n\n{email_text}"
+            system_prompt = (
+                "You are a concise spam filter for email classification. "
+                "Output JSON only (minified, one object), no extra text or markdown.\n"
+                "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n"
+                "Criteria (non-exhaustive): suspicious sender/domain, phishing, login/OTP/password reset bait, "
+                "malicious links/attachments, scam money/crypto, too-good-to-be-true offers, urgency/threats, "
+                "requests for personal data, poor grammar, marketing blast patterns.\n"
+                "Tie-breaking: if clearly legitimate (known brands, transactional, expected context) -> is_spam=false; "
+                "if clearly deceptive/harmful -> is_spam=true; else use best judgment and set confidence around 0.5.\n"
+                "Examples of valid outputs: {\"is_spam\":true,\"confidence\":0.92,\"reason\":\"Phishing link, urgent account suspension\"} "
+                "| {\"is_spam\":false,\"confidence\":0.81,\"reason\":\"Receipt from trusted domain\"}"
+            )
+            user_prompt = (
+                "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
+                f"{email_text}\n\n"
+                "Rappels: **retournes un JSON strict, minifié, champs exacts: is_spam, confidence, reason.**"
+            )
 
             response = self.openai_client.chat.completions.create(
                 model=model,
@@ -141,8 +137,7 @@ Example response: {"is_spam": false, "confidence": 0.8, "reason": "Legitimate em
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,
-                max_tokens=200
+                #max_completion_tokens=200
             )
 
             result_text = response.choices[0].message.content.strip()
