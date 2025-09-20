@@ -1,0 +1,75 @@
+# Git et historique
+.git/
+.gitignore
+.gitattributes
+
+# Environnements Python
+venv/
+env/
+.venv/
+.env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+
+# Configuration sensible (sera montée via volumes)
+.env
+*.log
+logs/
+
+# Tests et développement
+tests/
+.coverage
+htmlcov/
+.tox/
+.cache
+.pytest_cache/
+
+# Documentation et exemples
+*.md
+docs/
+examples/
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.sublime-*
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Données locales (seront montées via volumes)
+data/
+stats_cli.json
+
+# Fichiers temporaires et debug
+*.tmp
+*.temp
+debug_*
+reproduce_error.py
+test_*.py
+show_stats.py
+
+# Build et distribution
+build/
+dist/
+*.egg-info/

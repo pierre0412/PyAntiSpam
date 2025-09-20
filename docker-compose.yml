@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  pyantispam:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: pyantispam
+    restart: unless-stopped
+
+    # Variables d'environnement
+    environment:
+      - PYTHONPATH=/app
+      - TZ=Europe/Paris
+
+    # Fichier .env pour les clés API et mots de passe
+    env_file:
+      - .env
+
+    # Volumes persistants pour données et configuration
+    volumes:
+      # Configuration (lecture seule)
+      - ./config.yaml:/app/config.yaml:ro
+      - ./.env:/app/.env:ro
+
+      # Données persistantes (lecture/écriture)
+      - ./data:/app/data
+      - ./logs:/app/logs
+
+      # Optionnel: exemples de configuration
+      - ./config.yaml.example:/app/config.yaml.example:ro
+      - ./.env.example:/app/.env.example:ro
+
+    # Réseau isolé
+    networks:
+      - pyantispam-net
+
+    # Limits de ressources (optionnel)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+    # Logs
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  pyantispam-net:
+    driver: bridge
+    name: pyantispam-network
+
+volumes:
+  # Volume nommé optionnel pour backup
+  pyantispam-backup:
+    driver: local
