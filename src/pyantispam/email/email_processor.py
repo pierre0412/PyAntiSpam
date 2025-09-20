@@ -29,6 +29,7 @@ class EmailProcessor:
         self.stats_manager = StatsManager()
         self.llm_training_samples = []  # Collect LLM results for ML training
         self.processed_emails_cache = {}  # Cache for processed email fingerprints
+        self.processed_training_fingerprints = set()  # Track emails already used for training
         
         # Load persistent LLM cache
         self._load_cache()
@@ -113,6 +114,8 @@ class EmailProcessor:
             for email_id in email_ids:
                 try:
                     email_data = client.fetch_email(email_id)
+                    # Inject account context into email data for logging
+                    email_data['account_name'] = account_name
                     if not email_data:
                         results["errors"] += 1
                         self.logger.debug(f"Skipped invalid or deleted email {email_id}")
@@ -140,7 +143,8 @@ class EmailProcessor:
                         if was_unread:
                             # Make sure the email stays unread
                             client.mark_email_unread(email_id)
-                            self.logger.debug(f"Preserved unread status for non-spam email {email_id}")
+                            account = email_data.get('account_name', 'unknown')
+                            self.logger.debug(f"[account: {account}] Preserved unread status for non-spam email {email_id}")
 
                     # Log the decision
                     self._log_decision(email_data, decision)
@@ -154,7 +158,8 @@ class EmailProcessor:
                     })
 
                 except Exception as e:
-                    self.logger.error(f"Error processing email {email_id}: {e}")
+                    account = account_name
+                    self.logger.error(f"[account: {account}] Error processing email {email_id}: {e}")
                     results["errors"] += 1
                     self.stats_manager.record_error("email_processing")
 
@@ -303,20 +308,31 @@ class EmailProcessor:
                 "method": "blacklist"
             }
 
-        # Step 2: ML-based detection (placeholder)
+        # Step 2: Respect explicit user feedback overrides from cache (highest priority after lists)
+        email_fingerprint = self._get_email_fingerprint(email_data)
+        if email_fingerprint in self.processed_emails_cache:
+            cached_result = self.processed_emails_cache[email_fingerprint].copy()
+            if cached_result.get("method") == "user_feedback" or cached_result.get("override", False):
+                cached_result["reason"] += " (user feedback)"
+                self.logger.debug(f"Using user feedback override for email fingerprint: {email_fingerprint[:8]}...")
+                return cached_result
+
+        # Step 3: ML-based detection (placeholder)
         ml_result = self._ml_classify(email_data)
         if ml_result["confidence"] > self.config.get("detection.ml_confidence_threshold", 0.8):
             return ml_result
 
-        # Step 3: LLM-based detection for uncertain cases
+        # Step 4: LLM-based detection for uncertain cases
         if self.config.get("detection.use_llm_for_uncertain", True):
             # Check if we've already processed this email
-            email_fingerprint = self._get_email_fingerprint(email_data)
-            
             if email_fingerprint in self.processed_emails_cache:
                 cached_result = self.processed_emails_cache[email_fingerprint].copy()
                 cached_result["reason"] += " (cached)"
                 self.logger.debug(f"Using cached LLM result for email fingerprint: {email_fingerprint[:8]}...")
+                
+                # Collect cached LLM result as training data for ML model
+                self._collect_llm_training_sample(email_data, cached_result)
+                
                 return cached_result
             
             # Get LLM classification for new email
@@ -368,6 +384,11 @@ class EmailProcessor:
         try:
             # Only collect high-confidence LLM results
             if llm_result.get("confidence", 0) >= 0.7:
+                # Check if we've already collected a training sample for this email
+                email_fingerprint = self._get_email_fingerprint(email_data)
+                if email_fingerprint in self.processed_training_fingerprints:
+                    return  # Skip duplicate training sample
+                
                 is_spam = llm_result.get("action") == "SPAM"
                 
                 # Create training sample in the format expected by MLClassifier
@@ -377,6 +398,7 @@ class EmailProcessor:
                 }
                 
                 self.llm_training_samples.append(training_sample)
+                self.processed_training_fingerprints.add(email_fingerprint)
                 self.logger.debug(f"Collected LLM training sample: spam={is_spam}, confidence={llm_result.get('confidence', 0):.2f}")
                 
                 # Retrain ML model periodically when we have enough samples
@@ -413,18 +435,21 @@ class EmailProcessor:
 
             success = client.move_email_to_folder(email_id, spam_folder)
             if success:
-                self.logger.info(f"Moved spam email {email_id} to {spam_folder}")
+                account = email_data.get('account_name', 'unknown')
+                self.logger.info(f"[account: {account}] Moved spam email {email_id} to {spam_folder}")
             return success
         except Exception as e:
-            self.logger.error(f"Failed to move spam email {email_id}: {e}")
+            account = email_data.get('account_name', 'unknown')
+            self.logger.error(f"[account: {account}] Failed to move spam email {email_id}: {e}")
             return False
 
     def _log_decision(self, email_data: Dict[str, Any], decision: Dict[str, Any]):
         """Log spam detection decision"""
         # TODO: Implement detailed decision logging
         # This will be implemented with the logging module
+        account = email_data.get('account_name', 'unknown')
         self.logger.info(
-            f"Email decision: {decision['action']} | "
+            f"[account: {account}] Email decision: {decision['action']} | "
             f"From: {email_data.get('sender_email', 'unknown')} | "
             f"Subject: {email_data.get('subject', '')[:30]}... | "
             f"Reason: {decision['reason']}"

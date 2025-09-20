@@ -115,7 +115,9 @@ class LLMClassifier:
 
             system_prompt = """You are a spam detection expert. Analyze the email and determine if it's spam.
 
-Return a JSON response with:
+IMPORTANT: Return ONLY a valid JSON object, nothing else. Do not use markdown code blocks or any other formatting.
+
+Return JSON with these exact fields:
 - "is_spam": boolean (true if spam, false if legitimate)
 - "confidence": float between 0.0 and 1.0
 - "reason": string explaining the decision
@@ -127,7 +129,9 @@ Consider these spam indicators:
 - Malicious links or attachments
 - Poor grammar/spelling
 - Excessive urgency or threats
-- Requests for personal information"""
+- Requests for personal information
+
+Example response: {"is_spam": false, "confidence": 0.8, "reason": "Legitimate email from trusted domain"}"""
 
             user_prompt = f"Analyze this email:\n\n{email_text}"
 

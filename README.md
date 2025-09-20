@@ -1,3 +1,4 @@
+__Projet Vibecoded__
 # PyAntiSpam
 
 Système intelligent de détection et filtrage automatique des spams par email utilisant un pipeline en 3 étapes : listes manuelles, machine learning et LLM.

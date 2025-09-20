@@ -2,6 +2,9 @@
 
 import logging
 from typing import Dict, Any, List, Optional
+import json
+import time
+from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
@@ -67,6 +70,48 @@ class FeedbackProcessor:
 
         return results
 
+    def _compute_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
+        """Compute a fingerprint matching EmailProcessor logic for overrides"""
+        content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
+        import hashlib
+        return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _update_llm_cache_override(self, email_data: Dict[str, Any], is_spam: bool, reason: str):
+        """Persist a user feedback override into the LLM cache file"""
+        try:
+            cache_config = self.config.get('llm', {}).get('cache', {})
+            if cache_config.get('enabled', True) is False:
+                return
+            cache_file_path = cache_config.get('file_path', 'data/llm_cache.json')
+            cache_path = Path(cache_file_path)
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+            cache_data: Dict[str, Any] = {}
+            if cache_path.exists():
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                except Exception:
+                    cache_data = {}
+
+            fingerprint = self._compute_email_fingerprint(email_data)
+            entry = {
+                "action": "SPAM" if is_spam else "KEEP",
+                "reason": reason,
+                "confidence": 1.0,
+                "method": "user_feedback",
+                "override": True,
+                "timestamp": time.time()
+            }
+            cache_data[fingerprint] = entry
+
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, indent=2, ensure_ascii=False)
+
+            self.logger.info("Persisted user feedback override to cache for fingerprint: %s", fingerprint[:8])
+        except Exception as e:
+            self.logger.error("Failed to persist user feedback override: %s", e)
+
     def _process_feedback_folder(self, client: EmailClient, feedback_type: str,
                                 folder_name: str, account_name: str) -> Dict[str, Any]:
         """Process emails in a specific feedback folder"""
@@ -89,7 +134,7 @@ class FeedbackProcessor:
             if not client.select_folder(normalized_folder):
                 # Folder doesn't exist, create it for future use
                 client._create_folder_if_not_exists(normalized_folder)
-                self.logger.info(f"Created feedback folder: {normalized_folder}")
+                self.logger.info(f"[account: {account_name}] Created feedback folder: {normalized_folder}")
                 return results
 
             # Get all emails in folder
@@ -97,7 +142,7 @@ class FeedbackProcessor:
             if not email_ids:
                 return results
 
-            self.logger.info(f"Processing {len(email_ids)} feedback emails in {normalized_folder}")
+            self.logger.info(f"[account: {account_name}] Processing {len(email_ids)} feedback emails in {normalized_folder}")
 
             for email_id in email_ids:
                 try:
@@ -212,6 +257,8 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": False
                 })
+                # Persist a KEEP override for this exact email fingerprint
+                self._update_llm_cache_override(email_data, is_spam=False, reason="User feedback: not spam")
                 result["action"] = "correction"
                 result["item_added"] = "ml_training_ham"
                 result["ml_sample"] = True
@@ -223,6 +270,8 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": True
                 })
+                # Persist a SPAM override for this exact email fingerprint
+                self._update_llm_cache_override(email_data, is_spam=True, reason="User feedback: is spam")
                 result["action"] = "correction"
                 result["item_added"] = "ml_training_spam"
                 result["ml_sample"] = True
