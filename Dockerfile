@@ -17,15 +17,14 @@ RUN apt-get update && apt-get install -y \
 # Répertoire de travail
 WORKDIR /app
 
-# Copier et installer les dépendances Python
-COPY requirements.txt pyproject.toml ./
+# Copier les fichiers de projet essentiels et le code source avant installation
+COPY pyproject.toml requirements.txt ./
+COPY src/ ./src/
+
+# Installer les dépendances Python et le paquet
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -e .
-
-# Copier le code source
-COPY src/ ./src/
-COPY pyantispam ./pyantispam
 
 # Créer les répertoires de données avec bonnes permissions
 RUN mkdir -p /app/data /app/logs /app/config && \
