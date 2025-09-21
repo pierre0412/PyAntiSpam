@@ -39,7 +39,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import pyantispam; print('OK')" || exit 1
 
 # Port d'exposition (pour future API web)
-EXPOSE 8000
+# EXPOSE 8000
 
 # Commande par défaut - mode daemon
 CMD ["python", "-m", "pyantispam.cli", "daemon"]
