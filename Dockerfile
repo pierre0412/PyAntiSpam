@@ -4,14 +4,19 @@ FROM python:3.11-slim
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+# Fuseau horaire par défaut
+ENV TZ=Europe/Paris
 
 # Créer utilisateur non-root pour sécurité
 RUN groupadd -r pyantispam && useradd -r -g pyantispam pyantispam
 
-# Installer les dépendances système nécessaires
-RUN apt-get update && apt-get install -y \
+# Installer les dépendances système nécessaires (incl. tzdata) et configurer le fuseau horaire
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
     gcc \
     g++ \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 # Répertoire de travail

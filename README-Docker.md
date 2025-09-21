@@ -18,6 +18,12 @@ PyAntiSpam fonctionne en mode « daemon » dans le conteneur et lit sa configura
 - `docker-compose.yml` : service unique `pyantispam` avec volumes, env_file, logs, limites de ressources
 - `scripts/docker-run.sh` : script helper pour construire/démarrer/stopper/consulter les logs sans Compose
 
+### ⏰ Fuseau horaire
+- Le fuseau horaire du conteneur est configuré par défaut sur `Europe/Paris` (installation de `tzdata` + variables d'environnement).
+- Avec Docker Compose, c'est défini via `environment: TZ=Europe/Paris` (déjà présent dans `docker-compose.yml`).
+- Avec `docker run`, le script ajoute automatiquement `-e TZ=Europe/Paris`.
+- Pour utiliser un autre fuseau, remplacez la valeur de `TZ` (ex: `TZ=UTC` ou `TZ=America/New_York`).
+
 ---
 
 ## 🗂️ Répertoires et fichiers persistants
