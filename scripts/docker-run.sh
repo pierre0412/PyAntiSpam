@@ -99,6 +99,7 @@ run_with_docker() {
     docker run -d \
         --name "$CONTAINER_NAME" \
         --restart unless-stopped \
+        --user "$(id -u):$(id -g)" \
         -v "$(pwd)/$CONFIG_FILE:/app/config.yaml:ro" \
         -v "$(pwd)/$ENV_FILE:/app/.env:ro" \
         -v "$(pwd)/$DATA_DIR:/app/data" \

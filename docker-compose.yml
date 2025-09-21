@@ -17,6 +17,9 @@ services:
     env_file:
       - .env
 
+    # Exécuter avec l'UID/GID de l'utilisateur hôte pour éviter les problèmes de permissions sur les volumes
+    user: "${UID}:${GID}"
+
     # Volumes persistants pour données et configuration
     volumes:
       # Configuration (lecture seule)
