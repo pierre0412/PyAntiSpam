@@ -37,10 +37,14 @@ class FeatureExtractor:
         features.update(self._extract_subject_features(email_data.get('subject', '')))
 
         # Content features
-        features.update(self._extract_content_features(email_data.get('text_content', '')))
+        content_text = email_data.get('body') if email_data.get('body') is not None else email_data.get('text_content', '')
+        features.update(self._extract_content_features(content_text))
 
         # Sender features
         features.update(self._extract_sender_features(email_data))
+
+        # Header-based features (if headers available)
+        features.update(self._extract_header_features(email_data))
 
         return features
 
@@ -54,7 +58,7 @@ class FeatureExtractor:
         features['subject_word_count'] = len(subject.split())
 
         # Content length
-        content = email_data.get('text_content', '')
+        content = email_data.get('body') if email_data.get('body') is not None else email_data.get('text_content', '')
         features['content_length'] = len(content)
         features['content_word_count'] = len(content.split())
 
@@ -157,6 +161,68 @@ class FeatureExtractor:
 
         return features
 
+    def _extract_header_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
+        """Extract features from raw email headers when available"""
+        features: Dict[str, float] = {}
+        headers = email_data.get('raw_headers') or {}
+        if not isinstance(headers, dict):
+            # Ensure headers are a dict-like object
+            return {
+                'auth_spf_pass': 0.0,
+                'auth_dkim_pass': 0.0,
+                'auth_dmarc_pass': 0.0,
+                'from_dkim_domain_match': 0.0,
+                'has_list_unsubscribe': 0.0,
+                'replyto_from_mismatch': 0.0,
+                'message_id_domain_match': 0.0,
+                'received_hops': 0.0,
+            }
+
+        # Normalize helper
+        def hget(name: str) -> str:
+            v = headers.get(name)
+            if isinstance(v, list):
+                v = "; ".join([str(x) for x in v])
+            return str(v or '')
+
+        ar = hget('Authentication-Results').lower()
+        features['auth_spf_pass'] = 1.0 if 'spf=pass' in ar else 0.0
+        features['auth_dkim_pass'] = 1.0 if 'dkim=pass' in ar else 0.0
+        features['auth_dmarc_pass'] = 1.0 if 'dmarc=pass' in ar else 0.0
+
+        # DKIM domain alignment
+        import re
+        m = re.search(r'd=([^;\s]+)', ar)
+        dkim_domain = (m.group(1).lower() if m else '')
+        from_domain = (email_data.get('sender_domain') or '').lower()
+        features['from_dkim_domain_match'] = 1.0 if dkim_domain and (dkim_domain == from_domain or dkim_domain.endswith('.' + from_domain) or from_domain.endswith('.' + dkim_domain)) else 0.0
+
+        # List-Unsubscribe
+        features['has_list_unsubscribe'] = 1.0 if hget('List-Unsubscribe') else 0.0
+
+        # Reply-To mismatch
+        reply_to = hget('Reply-To').lower()
+        from_addr = (email_data.get('sender_email') or '').lower()
+        features['replyto_from_mismatch'] = 1.0 if reply_to and (reply_to not in from_addr) else 0.0
+
+        # Message-ID domain match
+        msg_id = hget('Message-ID')
+        msg_dom = msg_id.split('@')[-1].strip('>') if '@' in msg_id else ''
+        features['message_id_domain_match'] = 1.0 if msg_dom and (msg_dom.lower().endswith(from_domain)) else 0.0
+
+        # Received hops (approximate)
+        received = headers.get('Received')
+        if isinstance(received, list):
+            hops = len(received)
+        elif isinstance(received, str):
+            # crude heuristic: number of semicolons often equals hops
+            hops = received.count(';') if received else 1
+        else:
+            hops = 0
+        features['received_hops'] = float(hops)
+
+        return features
+
     def _extract_sender_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
         """Extract features from sender information"""
         features = {}
@@ -217,5 +283,12 @@ class FeatureExtractor:
         # Add keyword features
         for category in self.spam_keywords.keys():
             feature_names.extend([f'subject_{category}_keywords', f'content_{category}_keywords'])
+
+        # Header-based features
+        feature_names.extend([
+            'auth_spf_pass', 'auth_dkim_pass', 'auth_dmarc_pass',
+            'from_dkim_domain_match', 'has_list_unsubscribe',
+            'replyto_from_mismatch', 'message_id_domain_match', 'received_hops'
+        ])
 
         return sorted(feature_names)

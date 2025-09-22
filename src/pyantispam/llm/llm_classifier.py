@@ -99,12 +99,24 @@ class LLMClassifier:
         if email_data.get("subject"):
             parts.append(f"Subject: {email_data['subject']}")
 
-        if email_data.get("text_content"):
+        # Use body if available; fallback to text_content for backward-compat
+        content = email_data.get("body") if email_data.get("body") is not None else email_data.get("text_content")
+        if content:
             # Limit content length to avoid token limits
-            content = email_data["text_content"]
             if len(content) > 2000:
                 content = content[:2000] + "... [truncated]"
             parts.append(f"Content: {content}")
+
+        # Concise header summary for key signals (if available)
+        headers = email_data.get("raw_headers") or {}
+        if isinstance(headers, dict) and headers:
+            ar = str(headers.get("Authentication-Results", ""))
+            ar_snip = ar[:300]
+            lu_present = "present" if headers.get("List-Unsubscribe") else "absent"
+            reply_to = str(headers.get("Reply-To", "")).lower()
+            from_addr = str(email_data.get("sender_email", "")).lower()
+            reply_mismatch = "yes" if (reply_to and reply_to not in from_addr) else "no"
+            parts.append(f"Headers: Auth={ar_snip} | List-Unsubscribe={lu_present} | ReplyToMismatch={reply_mismatch}")
 
         return "\n".join(parts)
 
