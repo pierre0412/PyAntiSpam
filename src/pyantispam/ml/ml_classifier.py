@@ -41,6 +41,7 @@ class MLClassifier:
         self.model_file = self.data_dir / "spam_model.pkl"
         self.scaler_file = self.data_dir / "feature_scaler.pkl"
         self.training_data_file = self.data_dir / "training_data.json"
+        self.feature_names_file = self.data_dir / "feature_names.json"
 
         if not sklearn_available:
             self.logger.warning("scikit-learn not available. ML classification disabled.")
@@ -69,7 +70,20 @@ class MLClassifier:
             feature_vector = self._features_to_vector(features)
 
             # Scale features
-            feature_vector_scaled = self.scaler.transform([feature_vector])
+            try:
+                feature_vector_scaled = self.scaler.transform([feature_vector])
+            except Exception as shape_err:
+                # Handle feature size mismatch by reinitializing the model with current features
+                self.logger.warning(f"Scaler transform failed (likely feature mismatch): {shape_err}. Attempting auto-reinit.")
+                reinit = self.initialize_default_model()
+                if reinit.get("success"):
+                    try:
+                        feature_vector = self._features_to_vector(self.feature_extractor.extract_features(email_data))
+                        feature_vector_scaled = self.scaler.transform([feature_vector])
+                    except Exception as e2:
+                        raise e2
+                else:
+                    raise shape_err
 
             # Get prediction and probability
             prediction = self.model.predict(feature_vector_scaled)[0]
@@ -302,7 +316,13 @@ class MLClassifier:
                     pickle.dump(self.model, f)
                 with open(self.scaler_file, 'wb') as f:
                     pickle.dump(self.scaler, f)
-                self.logger.debug("Model and scaler saved successfully")
+                # Persist the feature names used to train the scaler/model for alignment
+                try:
+                    with open(self.feature_names_file, 'w') as fnf:
+                        json.dump(self.feature_names, fnf)
+                except Exception as e2:
+                    self.logger.warning(f"Could not save feature names: {e2}")
+                self.logger.debug("Model, scaler, and feature names saved successfully")
             except Exception as e:
                 self.logger.error(f"Error saving model: {e}")
 
@@ -314,8 +334,25 @@ class MLClassifier:
                     self.model = pickle.load(f)
                 with open(self.scaler_file, 'rb') as f:
                     self.scaler = pickle.load(f)
-                self.model_trained = True
-                self.logger.info("ML model loaded successfully")
+                # Try to load persisted feature names (backward compatible)
+                saved_feature_names: Optional[List[str]] = None
+                if self.feature_names_file.exists():
+                    try:
+                        with open(self.feature_names_file, 'r') as fnf:
+                            saved_feature_names = json.load(fnf)
+                    except Exception as e2:
+                        self.logger.debug(f"Could not read saved feature names: {e2}")
+                # If mismatch between saved names (or scaler shape) and current extractor names, reinit
+                current_len = len(self.feature_names)
+                scaler_len = getattr(self.scaler, 'n_features_in_', None)
+                saved_len = len(saved_feature_names) if isinstance(saved_feature_names, list) else None
+                if (scaler_len is not None and scaler_len != current_len) or (saved_len is not None and saved_len != current_len):
+                    self.logger.warning(
+                        f"Feature mismatch detected (scaler:{scaler_len}, saved:{saved_len}, current:{current_len}). Reinitializing model with default data.")
+                    self.initialize_default_model()
+                else:
+                    self.model_trained = True
+                    self.logger.info("ML model loaded successfully")
             else:
                 self.logger.info("No saved model found. Initialize with default data.")
                 # Auto-initialize with default data
