@@ -1,11 +1,11 @@
-__Projet Vibecoded__
+__Projet démarré en vibecoding et retouché à la main :)__
 # PyAntiSpam
 
 Système intelligent de détection et filtrage automatique des spams par email utilisant un pipeline en 3 étapes : listes manuelles, machine learning et LLM.
 
 ## Fonctionnalités
 
-### ✅ Détection Multi-Niveaux (Implémenté)
+### ✅ Détection Multi-Niveaux
 - **🥇 Whitelist/Blacklist** : Contrôle manuel prioritaire (emails et domaines entiers)
 - **🥈 Machine Learning** : Random Forest avec 40+ features (mots-clés, structure, domaines suspects)
 - **🥉 Large Language Models** : OpenAI GPT et Anthropic Claude pour les cas complexes
@@ -17,7 +17,7 @@ Système intelligent de détection et filtrage automatique des spams par email u
 - **Domaines entiers** : `example.com` bloque tous les `*@example.com`
 
 ### ✅ Multi-Comptes & IMAP
-- **Support multi-serveurs** : Gmail, Outlook, serveurs personnalisés
+- **Support multi-serveurs** : Gmail, Outlook, serveurs personnalisés tant que c'est de l'IMAP
 - **Gestion dossiers** : création automatique avec conventions IMAP
 - **Traitement robuste** : gestion des erreurs et emails supprimés
 
@@ -43,7 +43,7 @@ Système intelligent de détection et filtrage automatique des spams par email u
 
 ```bash
 # Cloner le projet
-git clone <repo-url>
+git clone https://github.com/pierre0412/PyAntiSpam.git
 cd PyAntiSpam
 
 # Créer environnement virtuel
@@ -81,13 +81,15 @@ email_accounts:
 
 # Paramètres de détection
 detection:
-  ml_confidence_threshold: 0.8    # Seuil ML (0.0-1.0)
+  ml_confidence_threshold: 0.8    # Seuil ML (0.0-1.0) 0 incertain, 1 confiance absolue
   use_llm_for_uncertain: true     # Utiliser LLM si ML incertain
+  classify_marketing_as_spam: true # Classify unsolicited marketing/newsletters as spam
+  marketing_confidence_threshold: 0.6  # Lower threshold for marketing classification
 
 # Configuration LLM
 llm:
   provider: "openai"              # openai ou anthropic
-  openai_model: "gpt-3.5-turbo"  # ou gpt-4
+  openai_model: "gpt-5-nano"  # ou gpt-4.1-nano
   anthropic_model: "claude-3-haiku-20240307"
 
 # Actions
@@ -121,7 +123,9 @@ Le système ML s'initialise automatiquement avec des exemples par défaut. Le mo
 ```yaml
 detection:
   ml_confidence_threshold: 0.8    # Plus élevé = plus strict
-  retrain_after_samples: 100      # Ré-entraîner après N nouveaux exemples
+
+learning:
+  retrain_threshold: 10           # Ré-entraîner après N nouveaux exemples
 ```
 
 ## Utilisation

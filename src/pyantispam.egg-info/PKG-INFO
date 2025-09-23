@@ -3,8 +3,8 @@ Name: pyantispam
 Version: 0.1.0
 Summary: Intelligent email spam detection and filtering system
 Author-email: Pierre <pierre@example.com>
-Project-URL: Homepage, https://github.com/pierre/pyantispam
-Project-URL: Repository, https://github.com/pierre/pyantispam
+Project-URL: Homepage, https://github.com/pierre0412/pyantispam
+Project-URL: Repository, https://github.com/pierre0412/pyantispam
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: End Users/Desktop
 Classifier: License :: OSI Approved :: MIT License
