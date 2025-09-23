@@ -37,6 +37,20 @@ detection:
   classify_marketing_as_spam: true # Classify unsolicited marketing/newsletters as spam
   marketing_confidence_threshold: 0.6  # Lower threshold for marketing classification
 
+# Learning and Retraining Settings (IMPLEMENTED)
+learning:
+  retrain_threshold: 10            # Retrain ML model after N new feedback samples
+# 5 trés réactif réentraine souvent
+# 10 équilibré réglage par défaut
+# 20 conservateur, plus stable, production, évite surapprentissage
+# 50 trés stable, réentraine rarement, serveur stable, peu de feedback
+
+# Note: The following folders are HARDCODED in the program:
+# - PYANTISPAM_IS_SPAM      (move false negatives here - emails that should be spam)
+# - PYANTISPAM_NOT_SPAM     (move false positives here - emails that are NOT spam)
+# - PYANTISPAM_WHITELIST    (auto-whitelist senders)
+# - PYANTISPAM_BLACKLIST    (auto-blacklist senders)
+
 # Action Settings
 actions:
   move_spam_to_folder: "SPAM_AUTO"  # Folder name to move spam
