@@ -131,7 +131,8 @@ class LLMClassifier:
                 "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n"
                 "Criteria (non-exhaustive): suspicious sender/domain, phishing, login/OTP/password reset bait, "
                 "malicious links/attachments, scam money/crypto, too-good-to-be-true offers, urgency/threats, "
-                "requests for personal data, poor grammar, marketing blast patterns.\n"
+                "requests for personal data, poor grammar, marketing blast patterns, unsolicited newsletters/promotions, "
+                "bulk commercial emails without explicit consent.\n"
                 "Tie-breaking: if clearly legitimate (known brands, transactional, expected context) -> is_spam=false; "
                 "if clearly deceptive/harmful -> is_spam=true; else use best judgment and set confidence around 0.5.\n"
                 "Examples of valid outputs: {\"is_spam\":true,\"confidence\":0.92,\"reason\":\"Phishing link, urgent account suspension\"} "
@@ -204,7 +205,7 @@ Please respond with JSON in this format:
     "reason": "explanation"
 }}
 
-Consider spam indicators like suspicious senders, phishing attempts, malicious content, poor grammar, urgency tactics, and requests for personal information."""
+Consider spam indicators like suspicious senders, phishing attempts, malicious content, poor grammar, urgency tactics, requests for personal information, unsolicited marketing emails, newsletters without consent, and bulk commercial promotions."""
 
             response = self.anthropic_client.messages.create(
                 model=model,

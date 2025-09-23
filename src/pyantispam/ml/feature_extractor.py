@@ -19,7 +19,11 @@ class FeatureExtractor:
             'money': ['free', 'money', 'cash', 'prize', 'winner', 'lottery', 'million', 'reward'],
             'suspicious': ['click here', 'verify', 'confirm', 'suspended', 'locked', 'update'],
             'phishing': ['login', 'password', 'account', 'security', 'verify', 'suspended'],
-            'marketing': ['offer', 'deal', 'discount', 'sale', 'promotion', 'limited'],
+            'marketing': ['offer', 'deal', 'discount', 'sale', 'promotion', 'limited', 'subscribe',
+                         'newsletter', 'unsubscribe', 'campaign', 'advertising', 'special offer',
+                         'best price', 'save money', 'exclusive', 'voucher', 'coupon', 'clearance',
+                         'black friday', 'cyber monday', 'flash sale', 'promotional', 'marketing',
+                         'commercial', 'advertisement', 'sponsor', 'affiliate', 'bulk', 'blast'],
             'scam': ['nigerian', 'inheritance', 'beneficiary', 'transfer', 'funds']
         }
 
@@ -159,6 +163,9 @@ class FeatureExtractor:
         html_pattern = r'<[^>]+>'
         features['content_html_tag_count'] = len(re.findall(html_pattern, content))
 
+        # Newsletter/marketing specific features
+        features.update(self._extract_newsletter_features(content))
+
         return features
 
     def _extract_header_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
@@ -257,6 +264,68 @@ class FeatureExtractor:
 
         return features
 
+    def _extract_newsletter_features(self, content: str) -> Dict[str, float]:
+        """Extract features specific to newsletters and marketing emails"""
+        features = {}
+        content_lower = content.lower()
+
+        # Tracking URL patterns (utm parameters, tracking domains)
+        tracking_patterns = [
+            r'utm_source=', r'utm_medium=', r'utm_campaign=', r'utm_content=',
+            r'tracking=', r'track=', r'source=', r'campaign='
+        ]
+        features['content_tracking_urls'] = sum(
+            len(re.findall(pattern, content_lower)) for pattern in tracking_patterns
+        )
+
+        # Newsletter-specific phrases
+        newsletter_phrases = [
+            'unsubscribe', 'opt out', 'manage preferences', 'email preferences',
+            'view in browser', 'web version', 'forward to friend', 'share this',
+            'newsletter', 'mailing list', 'subscription', 'opt-in'
+        ]
+        features['content_newsletter_phrases'] = sum(
+            content_lower.count(phrase) for phrase in newsletter_phrases
+        )
+
+        # Image placeholder patterns (common in HTML newsletters)
+        image_patterns = [
+            r'<img[^>]*>', r'src=[\'"][^>]*[\'"]', r'alt=[\'"][^>]*[\'"]',
+            r'\[image\]', r'\[logo\]', r'\[banner\]'
+        ]
+        features['content_image_count'] = sum(
+            len(re.findall(pattern, content_lower)) for pattern in image_patterns
+        )
+
+        # Social media links
+        social_patterns = [
+            r'facebook\.com', r'twitter\.com', r'linkedin\.com', r'instagram\.com',
+            r'youtube\.com', r'social', r'follow us'
+        ]
+        features['content_social_links'] = sum(
+            len(re.findall(pattern, content_lower)) for pattern in social_patterns
+        )
+
+        # Marketing call-to-action phrases
+        cta_phrases = [
+            'buy now', 'shop now', 'order now', 'download now', 'get started',
+            'sign up', 'register', 'learn more', 'read more', 'click here'
+        ]
+        features['content_cta_count'] = sum(
+            content_lower.count(phrase) for phrase in cta_phrases
+        )
+
+        # Percentage/price indicators
+        price_patterns = [
+            r'\d+%\s*off', r'\$\d+', r'€\d+', r'£\d+', r'price', r'cost',
+            r'save \$', r'discount', r'% discount'
+        ]
+        features['content_price_indicators'] = sum(
+            len(re.findall(pattern, content_lower)) for pattern in price_patterns
+        )
+
+        return features
+
     def get_feature_names(self) -> List[str]:
         """Get list of all possible feature names"""
         # This should match the features extracted above
@@ -289,6 +358,12 @@ class FeatureExtractor:
             'auth_spf_pass', 'auth_dkim_pass', 'auth_dmarc_pass',
             'from_dkim_domain_match', 'has_list_unsubscribe',
             'replyto_from_mismatch', 'message_id_domain_match', 'received_hops'
+        ])
+
+        # Newsletter-specific features
+        feature_names.extend([
+            'content_tracking_urls', 'content_newsletter_phrases', 'content_image_count',
+            'content_social_links', 'content_cta_count', 'content_price_indicators'
         ])
 
         return sorted(feature_names)

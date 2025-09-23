@@ -32,8 +32,10 @@ email_accounts:
 
 # Spam Detection Settings
 detection:
-  ml_confidence_threshold: 0.8  # Threshold for ML model certainty
-  use_llm_for_uncertain: true   # Use LLM for uncertain cases
+  ml_confidence_threshold: 0.8     # Threshold for ML model certainty
+  use_llm_for_uncertain: true      # Use LLM for uncertain cases
+  classify_marketing_as_spam: true # Classify unsolicited marketing/newsletters as spam
+  marketing_confidence_threshold: 0.6  # Lower threshold for marketing classification
 
 # Action Settings
 actions:

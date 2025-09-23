@@ -101,6 +101,19 @@ class MLClassifier:
             # Determine action
             is_spam = prediction == 1
 
+            # Check for marketing-specific classification if enabled
+            if not is_spam and self.config.get("detection.classify_marketing_as_spam", True):
+                marketing_score = self._calculate_marketing_score(features)
+                marketing_threshold = self.config.get("detection.marketing_confidence_threshold", 0.6)
+
+                if marketing_score >= marketing_threshold:
+                    return {
+                        "action": "SPAM",
+                        "reason": f"ML: Marketing content detected (score: {marketing_score:.2f})",
+                        "confidence": float(marketing_score),
+                        "method": "ml_marketing"
+                    }
+
             return {
                 "action": "SPAM" if is_spam else "KEEP",
                 "reason": f"ML: {'Spam' if is_spam else 'Ham'} (conf: {confidence:.2f})",
@@ -307,6 +320,46 @@ class MLClassifier:
         self.logger.info("Initializing ML model with default training data...")
         samples = self.create_default_training_data()
         return self.train_with_samples(samples)
+
+    def _calculate_marketing_score(self, features: Dict[str, float]) -> float:
+        """Calculate marketing probability based on specific features"""
+        # Weight different marketing indicators
+        marketing_score = 0.0
+
+        # Marketing keywords (high weight)
+        marketing_keywords = features.get('content_marketing_keywords', 0) + features.get('subject_marketing_keywords', 0)
+        marketing_score += min(marketing_keywords * 0.15, 0.5)  # Cap at 0.5
+
+        # Newsletter-specific features
+        newsletter_phrases = features.get('content_newsletter_phrases', 0)
+        marketing_score += min(newsletter_phrases * 0.1, 0.3)  # Cap at 0.3
+
+        # Tracking URLs (strong indicator)
+        tracking_urls = features.get('content_tracking_urls', 0)
+        marketing_score += min(tracking_urls * 0.2, 0.4)  # Cap at 0.4
+
+        # Call-to-action phrases
+        cta_count = features.get('content_cta_count', 0)
+        marketing_score += min(cta_count * 0.08, 0.3)  # Cap at 0.3
+
+        # Price indicators
+        price_indicators = features.get('content_price_indicators', 0)
+        marketing_score += min(price_indicators * 0.1, 0.2)  # Cap at 0.2
+
+        # Social links
+        social_links = features.get('content_social_links', 0)
+        marketing_score += min(social_links * 0.05, 0.15)  # Cap at 0.15
+
+        # HTML content (newsletters are often HTML-heavy)
+        html_tags = features.get('content_html_tag_count', 0)
+        if html_tags > 10:  # Many HTML tags suggest newsletter
+            marketing_score += 0.1
+
+        # List-Unsubscribe header (legitimate newsletters have this)
+        if features.get('has_list_unsubscribe', 0) > 0:
+            marketing_score += 0.15
+
+        return min(marketing_score, 1.0)  # Cap at 1.0
 
     def _save_model(self):
         """Save trained model and scaler"""
