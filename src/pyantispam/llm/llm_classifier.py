@@ -123,7 +123,7 @@ class LLMClassifier:
     def _classify_with_openai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify using OpenAI API"""
         try:
-            model = self.config.get("llm.openai_model", "gpt-5-nano")
+            model = self.config.get("llm.openai_model", "gpt-4.1-nano")
 
             system_prompt = (
                 "You are a concise spam filter for email classification. "
