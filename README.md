@@ -1,7 +1,8 @@
-__Projet démarré en vibecoding et retouché à la main :)__
+### Projet démarré en vibecoding et retouché à la main :)
 # PyAntiSpam
 
 Système intelligent de détection et filtrage automatique des spams par email utilisant un pipeline en 3 étapes : listes manuelles, machine learning et LLM.
+Le script peut tourner en continu ou être lancé ponctuellement. Il peut être utilisé seul ou tourner dans un container Docker (voir README-docker.md et /scripts/docker-run.sh)
 
 ## Fonctionnalités
 

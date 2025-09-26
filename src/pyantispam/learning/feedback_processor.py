@@ -8,6 +8,7 @@ from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
+from ..stats.stats_manager import StatsManager
 
 
 class FeedbackProcessor:
@@ -28,6 +29,7 @@ class FeedbackProcessor:
         # Components
         self.list_manager = ListManager()
         self.ml_classifier = MLClassifier(config)
+        self.stats_manager = StatsManager()
 
         # Training samples for ML retraining
         self.training_samples = []
@@ -66,7 +68,12 @@ class FeedbackProcessor:
 
         # Retrain ML model if we have enough new samples
         if len(self.training_samples) >= self.config.get("learning.retrain_threshold", 10):
-            self._retrain_ml_model()
+            retrain_result = self._retrain_ml_model()
+            # Record retraining in stats
+            if retrain_result:
+                self.stats_manager.record_ml_retrain(retrain_result)
+                results["ml_retraining_performed"] = True
+                results["ml_retrain_accuracy"] = retrain_result.get("accuracy", 0)
 
         return results
 
@@ -339,11 +346,14 @@ class FeedbackProcessor:
                 self.logger.info(f"ML model retrained successfully. New accuracy: {result.get('accuracy', 'unknown'):.3f}")
                 # Clear samples after successful training
                 self.training_samples.clear()
+                return result
             else:
                 self.logger.error(f"ML retraining failed: {result.get('error', 'unknown')}")
+                return result
 
         except Exception as e:
             self.logger.error(f"Error during ML retraining: {e}")
+            return {"success": False, "error": str(e)}
 
     def create_feedback_folders(self, client: EmailClient) -> Dict[str, bool]:
         """Create all feedback folders if they don't exist"""
