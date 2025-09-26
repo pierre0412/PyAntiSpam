@@ -16,7 +16,11 @@ class StatsManager:
         self.data_dir.mkdir(exist_ok=True)
 
         self.stats_file = self.data_dir / "spam_stats.json"
+        self.processed_emails_file = self.data_dir / "processed_emails.json"
         self.logger = logging.getLogger(__name__)
+
+        # Track processed emails to avoid double counting
+        self.processed_emails = set()
 
         # Initialize stats structure
         self.stats = {
@@ -64,6 +68,7 @@ class StatsManager:
         }
 
         self._load_stats()
+        self._load_processed_emails()
 
     def _load_stats(self):
         """Load statistics from file"""
@@ -89,6 +94,37 @@ class StatsManager:
                     base[key] = value
 
         deep_merge(self.stats, loaded_stats)
+
+    def _load_processed_emails(self):
+        """Load processed emails tracking from file"""
+        try:
+            if self.processed_emails_file.exists():
+                with open(self.processed_emails_file, 'r', encoding='utf-8') as f:
+                    processed_list = json.load(f)
+                    self.processed_emails = set(processed_list)
+                self.logger.debug(f"Loaded {len(self.processed_emails)} processed email fingerprints")
+            else:
+                self.logger.debug("No processed emails file found, starting fresh")
+        except Exception as e:
+            self.logger.error(f"Error loading processed emails: {e}")
+            self.processed_emails = set()
+
+    def _save_processed_emails(self):
+        """Save processed emails tracking to file"""
+        try:
+            # Only keep recent processed emails to avoid file growing too large
+            # Keep emails from last 30 days worth of processing
+            max_entries = 10000
+            if len(self.processed_emails) > max_entries:
+                # Keep the most recent entries (this is a simple approach)
+                processed_list = list(self.processed_emails)
+                self.processed_emails = set(processed_list[-max_entries:])
+
+            with open(self.processed_emails_file, 'w', encoding='utf-8') as f:
+                json.dump(list(self.processed_emails), f, ensure_ascii=False)
+            self.logger.debug(f"Saved {len(self.processed_emails)} processed email fingerprints")
+        except Exception as e:
+            self.logger.error(f"Error saving processed emails: {e}")
 
     def _save_stats(self):
         """Save statistics to file"""
@@ -116,9 +152,14 @@ class StatsManager:
                 "errors": 0
             }
 
-    def record_detection(self, decision: Dict[str, Any], processing_time: float = 0.0):
+    def record_detection(self, decision: Dict[str, Any], processing_time: float = 0.0, email_fingerprint: str = None):
         """Record a spam detection decision"""
         try:
+            # Check if this email was already processed (avoid double counting)
+            if email_fingerprint and email_fingerprint in self.processed_emails:
+                self.logger.debug(f"Skipping stats for already processed email: {email_fingerprint[:8]}...")
+                return
+
             action = decision.get("action", "KEEP")
             method = decision.get("method", "unknown")
             confidence = decision.get("confidence", 0.5)
@@ -166,6 +207,11 @@ class StatsManager:
                 times = self.stats["performance"]["processing_times"]
                 self.stats["performance"]["avg_processing_time"] = sum(times) / len(times)
 
+            # Mark email as processed to avoid future double counting
+            if email_fingerprint:
+                self.processed_emails.add(email_fingerprint)
+                self._save_processed_emails()
+
             self._save_stats()
 
         except Exception as e:
@@ -211,6 +257,10 @@ class StatsManager:
             if retrain_results.get("success", False):
                 self.stats["learning"]["ml_retraining_count"] += 1
                 self.stats["learning"]["last_retrain_date"] = datetime.now().isoformat()
+                accuracy = retrain_results.get("accuracy", 0)
+
+                # Log important retraining event
+                self.logger.warning(f"📊 STATS: Réentraînement ML #{self.stats['learning']['ml_retraining_count']} enregistré avec succès (précision: {accuracy:.3f})")
 
             self._save_stats()
 
@@ -357,6 +407,10 @@ class StatsManager:
         self.stats["performance"]["last_error_date"] = None
 
         self.stats["daily_stats"] = {}
+
+        # Also reset processed emails tracking
+        self.processed_emails = set()
+        self._save_processed_emails()
 
         self._save_stats()
         self.logger.warning("All statistics have been reset")

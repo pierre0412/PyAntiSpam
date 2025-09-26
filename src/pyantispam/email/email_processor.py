@@ -129,8 +129,11 @@ class EmailProcessor:
 
                     results["processed"] += 1
 
-                    # Record statistics
-                    self.stats_manager.record_detection(decision, processing_time)
+                    # Get email fingerprint for stats tracking
+                    email_fingerprint = self._get_email_fingerprint(email_data)
+
+                    # Record statistics (with fingerprint to avoid double counting)
+                    self.stats_manager.record_detection(decision, processing_time, email_fingerprint)
 
                     # Take action based on decision
                     if decision["action"] == "SPAM":
@@ -411,19 +414,23 @@ class EmailProcessor:
     def _retrain_ml_with_llm_samples(self):
         """Retrain ML model with collected LLM samples"""
         try:
-            self.logger.info(f"Retraining ML model with {len(self.llm_training_samples)} LLM samples")
-            
+            self.logger.warning(f"🤖 DÉCLENCHEMENT RÉENTRAÎNEMENT ML avec {len(self.llm_training_samples)} échantillons LLM")
+
             result = self.ml_classifier.train_with_samples(self.llm_training_samples)
-            
+
             if result["success"]:
-                self.logger.info(f"ML model retrained with LLM data. New accuracy: {result.get('accuracy', 'unknown'):.3f}")
+                accuracy = result.get('accuracy', 0)
+                self.logger.warning(f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès ! Nouvelle précision: {accuracy:.3f}")
+                # Record retraining stats
+                self.stats_manager.record_ml_retrain(result)
                 # Clear samples after successful training
                 self.llm_training_samples.clear()
             else:
-                self.logger.error(f"ML retraining with LLM samples failed: {result.get('error', 'unknown')}")
-                
+                error = result.get('error', 'unknown')
+                self.logger.error(f"❌ ÉCHEC du réentraînement ML avec échantillons LLM: {error}")
+
         except Exception as e:
-            self.logger.error(f"Error during ML retraining with LLM samples: {e}")
+            self.logger.error(f"❌ ERREUR durant le réentraînement ML avec échantillons LLM: {e}")
 
     def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any]) -> bool:
         """Handle detected spam email according to configuration"""

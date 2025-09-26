@@ -338,21 +338,23 @@ class FeedbackProcessor:
     def _retrain_ml_model(self):
         """Retrain ML model with accumulated feedback samples"""
         try:
-            self.logger.info(f"Retraining ML model with {len(self.training_samples)} new samples")
+            self.logger.warning(f"🎓 DÉCLENCHEMENT RÉENTRAÎNEMENT ML avec {len(self.training_samples)} échantillons de feedback utilisateur")
 
             result = self.ml_classifier.train_with_samples(self.training_samples)
 
             if result["success"]:
-                self.logger.info(f"ML model retrained successfully. New accuracy: {result.get('accuracy', 'unknown'):.3f}")
+                accuracy = result.get('accuracy', 0)
+                self.logger.warning(f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès ! Nouvelle précision: {accuracy:.3f}")
                 # Clear samples after successful training
                 self.training_samples.clear()
                 return result
             else:
-                self.logger.error(f"ML retraining failed: {result.get('error', 'unknown')}")
+                error = result.get('error', 'unknown')
+                self.logger.error(f"❌ ÉCHEC du réentraînement ML avec feedback: {error}")
                 return result
 
         except Exception as e:
-            self.logger.error(f"Error during ML retraining: {e}")
+            self.logger.error(f"❌ ERREUR durant le réentraînement ML: {e}")
             return {"success": False, "error": str(e)}
 
     def create_feedback_folders(self, client: EmailClient) -> Dict[str, bool]:
