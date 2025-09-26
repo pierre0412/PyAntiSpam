@@ -165,26 +165,37 @@ main() {
             ;;
         "retrain")
             if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-                log_info "Lancement du réentraînement ML forcé..."
-                docker exec "$CONTAINER_NAME" python force_retrain.py
+                log_info "Lancement du réentraînement ML avec données RÉELLES..."
+                docker exec "$CONTAINER_NAME" python force_retrain_real.py
                 log_info "Réentraînement terminé ✓"
             else
                 log_error "Container $CONTAINER_NAME n'est pas en cours d'exécution"
                 exit 1
             fi
             ;;
+        "retrain-demo")
+            if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+                log_info "Lancement du réentraînement ML avec données de démo..."
+                docker exec "$CONTAINER_NAME" python force_retrain.py
+                log_info "Réentraînement démo terminé ✓"
+            else
+                log_error "Container $CONTAINER_NAME n'est pas en cours d'exécution"
+                exit 1
+            fi
+            ;;
         "help"|*)
-            echo "Usage: $0 {build|start|stop|logs|shell|stats|retrain|help}"
+            echo "Usage: $0 {build|start|stop|logs|shell|stats|retrain|retrain-demo|help}"
             echo ""
             echo "Commandes:"
-            echo "  build   - Construire l'image Docker"
-            echo "  start   - Démarrer PyAntiSpam en mode daemon"
-            echo "  stop    - Arrêter le container"
-            echo "  logs    - Afficher les logs en temps réel"
-            echo "  shell   - Ouvrir un shell dans le container"
-            echo "  stats   - Afficher les statistiques"
-            echo "  retrain - Forcer un réentraînement ML"
-            echo "  help    - Afficher cette aide"
+            echo "  build        - Construire l'image Docker"
+            echo "  start        - Démarrer PyAntiSpam en mode daemon"
+            echo "  stop         - Arrêter le container"
+            echo "  logs         - Afficher les logs en temps réel"
+            echo "  shell        - Ouvrir un shell dans le container"
+            echo "  stats        - Afficher les statistiques"
+            echo "  retrain      - Forcer un réentraînement ML (données RÉELLES)"
+            echo "  retrain-demo - Réentraînement avec données de démo"
+            echo "  help         - Afficher cette aide"
             ;;
     esac
 }

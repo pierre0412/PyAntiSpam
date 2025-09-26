@@ -25,7 +25,7 @@ WORKDIR /app
 # Copier les fichiers de projet essentiels et le code source avant installation
 COPY pyproject.toml requirements.txt ./
 COPY src/ ./src/
-COPY force_retrain.py ./
+COPY force_retrain.py force_retrain_real.py ./
 
 # Installer les dépendances Python et le paquet
 RUN pip install --no-cache-dir --upgrade pip && \
