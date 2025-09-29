@@ -153,6 +153,9 @@ def run(ctx, account: Optional[str], folder: str, dry_run: bool):
                 click.echo(f"   🚨 Spam detected: {results['spam_detected']}")
                 click.echo(f"   🗑️  Spam moved: {results['spam_moved']}")
 
+                if results.get('cleanup_deleted', 0) > 0:
+                    click.echo(f"   🧹 Old spam deleted: {results['cleanup_deleted']}")
+
                 if results['errors'] > 0:
                     click.echo(f"   ⚠️  Errors: {results['errors']}")
 

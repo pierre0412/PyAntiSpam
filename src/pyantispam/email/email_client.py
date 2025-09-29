@@ -327,6 +327,66 @@ class EmailClient:
             self.logger.error(f"Error getting folder list: {e}")
             return []
 
+    def cleanup_old_spam(self, spam_folder: str, days_threshold: int) -> int:
+        """Delete emails older than threshold from spam folder"""
+        if not self.imap:
+            raise ConnectionError("Not connected to IMAP server")
+
+        if days_threshold <= 0:
+            self.logger.debug("Auto-delete disabled (days_threshold <= 0)")
+            return 0
+
+        try:
+            # Select spam folder
+            status, _ = self.imap.select(spam_folder)
+            if status != "OK":
+                self.logger.warning(f"Cannot access spam folder '{spam_folder}' for cleanup")
+                return 0
+
+            # Calculate cutoff date
+            from datetime import datetime, timedelta
+            cutoff_date = datetime.now() - timedelta(days=days_threshold)
+            cutoff_str = cutoff_date.strftime("%d-%b-%Y")
+
+            # Search for emails older than cutoff date
+            status, email_ids = self.imap.search(None, f'BEFORE "{cutoff_str}"')
+            if status != "OK":
+                self.logger.warning(f"Search failed in spam folder '{spam_folder}'")
+                return 0
+
+            if not email_ids or not email_ids[0]:
+                self.logger.debug(f"No old emails found in spam folder '{spam_folder}'")
+                return 0
+
+            # Get list of email IDs to delete
+            old_email_ids = email_ids[0].decode().split()
+            deleted_count = 0
+
+            for email_id in old_email_ids:
+                try:
+                    # Mark as deleted
+                    self.imap.store(email_id, "+FLAGS", "\\Deleted")
+                    deleted_count += 1
+                except Exception as e:
+                    self.logger.warning(f"Failed to mark email {email_id} for deletion: {e}")
+
+            # Expunge to actually delete
+            if deleted_count > 0:
+                self.imap.expunge()
+                self.logger.info(f"Auto-deleted {deleted_count} old emails from spam folder '{spam_folder}'")
+
+            return deleted_count
+
+        except Exception as e:
+            self.logger.error(f"Error during spam cleanup: {e}")
+            return 0
+        finally:
+            # Return to INBOX
+            try:
+                self.imap.select("INBOX")
+            except:
+                pass
+
     def _normalize_folder_name(self, folder_name: str) -> str:
         """Normalize folder name based on server conventions"""
         if not folder_name or folder_name == "INBOX":

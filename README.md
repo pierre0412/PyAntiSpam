@@ -21,6 +21,7 @@ Le script peut tourner en continu ou être lancé ponctuellement. Il peut être 
 - **Support multi-serveurs** : Gmail, Outlook, serveurs personnalisés tant que c'est de l'IMAP
 - **Gestion dossiers** : création automatique avec conventions IMAP
 - **Traitement robuste** : gestion des erreurs et emails supprimés
+- **Nettoyage automatique** : suppression des anciens spams après X jours
 
 ### ✅ Configuration Flexible
 - **YAML** : configuration principale centralisée
@@ -96,6 +97,7 @@ llm:
 # Actions
 actions:
   move_spam_to_folder: "SPAM_AUTO"  # Dossier de destination
+  auto_delete_after_days: 10        # Suppression auto des spams après X jours (0 = jamais)
 ```
 
 ### 3. Variables d'environnement (`.env`)
@@ -269,10 +271,10 @@ Email entrant
 ### Commandes principales
 ```bash
 # Traitement des emails
-pyantispam run                              # Scan une fois + traite feedbacks
-pyantispam run --dry-run                    # Test sans actions
+pyantispam run                              # Scan une fois + traite feedbacks + nettoyage auto
+pyantispam run --dry-run                    # Test sans actions (pas de nettoyage)
 pyantispam run --account personal           # Compte spécifique
-pyantispam daemon                           # Mode continu
+pyantispam daemon                           # Mode continu avec nettoyage périodique
 
 # Statistiques et monitoring
 pyantispam stats                            # Statistiques complètes
@@ -284,6 +286,23 @@ pyantispam status                           # État du système
 pyantispam setup                            # Configuration initiale
 pyantispam test-config                      # Tester la configuration
 ```
+
+### Gestion automatique des spams
+
+Le système effectue un **nettoyage automatique** des anciens spams à chaque exécution :
+
+```yaml
+# config.yaml
+actions:
+  move_spam_to_folder: "SPAM_AUTO"     # Dossier de destination des spams
+  auto_delete_after_days: 10           # Suppression automatique après 10 jours
+```
+
+**Comportements :**
+- `auto_delete_after_days: 10` → Supprime les spams > 10 jours du dossier spam
+- `auto_delete_after_days: 0` → Désactive le nettoyage automatique (conservation infinie)
+- Le nettoyage s'exécute **avant** le traitement des nouveaux emails
+- Affichage CLI : `🧹 Old spam deleted: X` si des emails sont supprimés
 
 ### Gestion whitelist
 ```bash

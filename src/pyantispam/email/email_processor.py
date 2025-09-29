@@ -97,10 +97,23 @@ class EmailProcessor:
             "spam_detected": 0,
             "spam_moved": 0,
             "errors": 0,
+            "cleanup_deleted": 0,
             "details": []
         }
 
         try:
+            # Perform spam folder cleanup first
+            auto_delete_days = self.config.get("actions.auto_delete_after_days", 0)
+            if auto_delete_days > 0:
+                spam_folder = self.config.get("actions.move_spam_to_folder", "SPAM_AUTO")
+                try:
+                    deleted_count = client.cleanup_old_spam(spam_folder, auto_delete_days)
+                    results["cleanup_deleted"] = deleted_count
+                    if deleted_count > 0:
+                        self.logger.info(f"[account: {account_name}] Auto-deleted {deleted_count} old emails from {spam_folder}")
+                except Exception as e:
+                    self.logger.warning(f"[account: {account_name}] Spam cleanup failed: {e}")
+
             # Select the folder
             if not client.select_folder(folder):
                 self.logger.error(f"Could not select folder {folder} for {account_name}")

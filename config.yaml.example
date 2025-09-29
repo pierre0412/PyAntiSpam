@@ -54,7 +54,7 @@ learning:
 # Action Settings
 actions:
   move_spam_to_folder: "SPAM_AUTO"  # Folder name to move spam
-  auto_delete_after_days: 30        # Auto-delete spam after N days (0 = never)
+  auto_delete_after_days: 10        # Auto-delete spam after N days (0 = never)
 
 # Email Connection Settings
 email_connection:
