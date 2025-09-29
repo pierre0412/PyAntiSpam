@@ -337,6 +337,9 @@ class EmailClient:
             return 0
 
         try:
+            # Create folder if it doesn't exist
+            self._create_folder_if_not_exists(spam_folder)
+
             # Select spam folder
             status, _ = self.imap.select(spam_folder)
             if status != "OK":
