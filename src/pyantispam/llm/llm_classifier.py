@@ -93,11 +93,21 @@ class LLMClassifier:
         """Prepare email text for LLM analysis"""
         parts = []
 
-        if email_data.get("sender_email"):
-            parts.append(f"From: {email_data['sender_email']}")
+        sender_email = email_data.get("sender_email", "")
+        if sender_email:
+            parts.append(f"From: {sender_email}")
+
+            # Extract domain for spoofing analysis
+            sender_domain = sender_email.split('@')[-1].lower() if '@' in sender_email else ""
+            if sender_domain:
+                parts.append(f"Sender Domain: {sender_domain}")
 
         if email_data.get("subject"):
-            parts.append(f"Subject: {email_data['subject']}")
+            subject = email_data['subject']
+            parts.append(f"Subject: {subject}")
+
+            # Analyze potential brand impersonation in subject
+            self._add_brand_analysis(parts, subject, sender_email)
 
         # Use body if available; fallback to text_content for backward-compat
         content = email_data.get("body") if email_data.get("body") is not None else email_data.get("text_content")
@@ -116,9 +126,45 @@ class LLMClassifier:
             reply_to = str(headers.get("Reply-To", "")).lower()
             from_addr = str(email_data.get("sender_email", "")).lower()
             reply_mismatch = "yes" if (reply_to and reply_to not in from_addr) else "no"
-            parts.append(f"Headers: Auth={ar_snip} | List-Unsubscribe={lu_present} | ReplyToMismatch={reply_mismatch}")
+
+            # Add Return-Path analysis if available
+            return_path = str(headers.get("Return-Path", "")).lower()
+            return_path_mismatch = "yes" if (return_path and return_path not in from_addr) else "no"
+
+            parts.append(f"Headers: Auth={ar_snip} | List-Unsubscribe={lu_present} | ReplyToMismatch={reply_mismatch} | ReturnPathMismatch={return_path_mismatch}")
 
         return "\n".join(parts)
+
+    def _add_brand_analysis(self, parts: list, subject: str, sender_email: str) -> None:
+        """Add brand impersonation analysis"""
+        # Common brand keywords that are often impersonated
+        brand_keywords = [
+            # Banks
+            'credit agricole', 'creditagricole', 'ca-bank', 'cabank',
+            'bnp paribas', 'bnpparibas', 'societe generale', 'societegenerale',
+            'banque populaire', 'banquepopulaire', 'lcl', 'cic',
+
+            # Services
+            'paypal', 'amazon', 'ebay', 'microsoft', 'google', 'apple',
+            'facebook', 'instagram', 'linkedin', 'twitter',
+
+            # French services
+            'ovh', 'ovhcloud', 'orange', 'sfr', 'bouygues', 'free',
+            'edf', 'engie', 'la poste', 'laposte', 'sncf',
+            'caf', 'cpam', 'ameli', 'pole emploi', 'impots', 'dgfip'
+        ]
+
+        subject_lower = subject.lower()
+        sender_lower = sender_email.lower()
+
+        # Check if subject mentions a brand but sender domain doesn't match
+        for brand in brand_keywords:
+            if brand in subject_lower or brand.replace(' ', '') in subject_lower:
+                # Check if sender domain matches the brand
+                brand_clean = brand.replace(' ', '').replace('-', '')
+                if brand_clean not in sender_lower:
+                    parts.append(f"⚠️ BRAND MISMATCH: Subject mentions '{brand}' but sender is {sender_email}")
+                    break
 
     def _classify_with_openai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify using OpenAI API"""
@@ -126,17 +172,27 @@ class LLMClassifier:
             model = self.config.get("llm.model", "gpt-4.1-nano")
 
             system_prompt = (
-                "You are a concise spam filter for email classification. "
-                "Output JSON only (minified, one object), no extra text or markdown.\n"
-                "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n"
-                "Criteria (non-exhaustive): suspicious sender/domain, phishing, login/OTP/password reset bait, "
-                "malicious links/attachments, scam money/crypto, too-good-to-be-true offers, urgency/threats, "
-                "requests for personal data, poor grammar, marketing blast patterns, unsolicited newsletters/promotions, "
-                "bulk commercial emails without explicit consent.\n"
-                "Tie-breaking: if clearly legitimate (known brands, transactional, expected context) -> is_spam=false; "
-                "if clearly deceptive/harmful -> is_spam=true; else use best judgment and set confidence around 0.5.\n"
-                "Examples of valid outputs: {\"is_spam\":true,\"confidence\":0.92,\"reason\":\"Phishing link, urgent account suspension\"} "
-                "| {\"is_spam\":false,\"confidence\":0.81,\"reason\":\"Receipt from trusted domain\"}"
+                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text or markdown.\n"
+                "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
+                "SPAM INDICATORS (be aggressive on detection):\n"
+                "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
+                "brand impersonation (banks, social media, services), suspicious authentication requests\n"
+                "• MALWARE/VIRUS: suspicious attachments (.exe, .zip, .scr), shortened/suspicious URLs, "
+                "download prompts, fake software updates, malicious redirects\n"
+                "• MARKETING/COMMERCIAL: unsolicited newsletters, promotional blasts, sales pitches, "
+                "unsubscribe from unknown lists, bulk commercial content, affiliate marketing\n"
+                "• SCAMS: money transfers, crypto schemes, inheritance scams, lottery wins, "
+                "investment opportunities, romance scams, fake charities\n"
+                "• SOCIAL ENGINEERING: urgent action required, fear tactics, authority impersonation, "
+                "personal info requests, pressure to click/download/respond quickly\n"
+                "• TECHNICAL: domain spoofing, reply-to mismatches, poor SPF/DKIM, suspicious headers\n"
+                "• DOMAIN SPOOFING: brand mentions in subject/content but sender domain doesn't match "
+                "(e.g., 'OVH' email from ovhcloud@gmail.com, 'Crédit Agricole' from creditagrlcole.fr)\n\n"
+                "LEGITIMATE indicators: transactional emails from known services, expected communications, "
+                "proper authentication, recognized brands with matching domains.\n\n"
+                "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
+                "Examples: {\"is_spam\":true,\"confidence\":0.95,\"reason\":\"Phishing: fake bank login with urgent tone\"} "
+                "| {\"is_spam\":true,\"confidence\":0.87,\"reason\":\"Marketing: unsolicited promotional blast\"}"
             )
             user_prompt = (
                 "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
@@ -193,19 +249,64 @@ class LLMClassifier:
         try:
             model = self.config.get("llm.model", "claude-3-haiku-20240307")
 
-            prompt = f"""You are a spam detection expert. Analyze this email and determine if it's spam.
+            prompt = f"""You are an expert email security analyst specializing in threat detection. Analyze this email and determine if it's spam.
 
 Email to analyze:
 {email_text}
 
-Please respond with JSON in this format:
+Respond with JSON in this exact format:
 {{
     "is_spam": true/false,
     "confidence": 0.0-1.0,
-    "reason": "explanation"
+    "reason": "detailed explanation"
 }}
 
-Consider spam indicators like suspicious senders, phishing attempts, malicious content, poor grammar, urgency tactics, requests for personal information, unsolicited marketing emails, newsletters without consent, and bulk commercial promotions."""
+COMPREHENSIVE THREAT ANALYSIS - Be AGGRESSIVE in detection:
+
+🎯 PHISHING & SECURITY THREATS:
+- Account suspension/verification scams, fake login pages
+- Brand impersonation (banks, PayPal, social media, cloud services)
+- Credential harvesting, fake 2FA/OTP requests
+- Suspicious authentication alerts, fake security warnings
+
+🦠 MALWARE & MALICIOUS CONTENT:
+- Dangerous attachments (.exe, .zip, .scr, .bat, .com)
+- Suspicious download links, fake software updates
+- URL shorteners, suspicious redirects, typosquatting domains
+- Fake document sharing (fake Google Drive, Dropbox links)
+
+📧 MARKETING & COMMERCIAL SPAM:
+- Unsolicited newsletters, promotional blasts
+- Affiliate marketing, MLM schemes
+- Unsubscribe from unknown senders, bulk commercial content
+- Cold sales pitches, lead generation emails
+
+💰 SCAMS & FRAUD:
+- Money transfer requests, inheritance scams, lottery wins
+- Cryptocurrency schemes, investment opportunities
+- Romance scams, fake charity requests
+- Business email compromise (BEC) attempts
+
+🎭 SOCIAL ENGINEERING:
+- Urgent action required, fear-based messaging
+- Authority impersonation (CEO, IT support, government)
+- Pressure tactics, time-sensitive offers
+- Personal information requests, survey scams
+
+🔍 TECHNICAL INDICATORS:
+- SPF/DKIM/DMARC failures, domain spoofing
+- Reply-to address mismatches, suspicious headers
+- Poor grammar/spelling in professional contexts
+- Generic greetings from supposed known contacts
+
+🚨 DOMAIN SPOOFING & BRAND IMPERSONATION:
+- Brand names in subject but sender domain doesn't match official domain
+- Examples: "OVH" email from ovhcloud@gmail.com, "Crédit Agricole" from creditagrlcole.fr
+- Typosquatting: creditagricole.com vs creditagrlcole.fr, paypal vs paypaI (with capital i)
+- Wrong TLD: paypal.net instead of paypal.com, amazon.co instead of amazon.fr
+- Pay attention to ⚠️ BRAND MISMATCH warnings in email data
+
+DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark as legitimate if clearly expected/transactional."""
 
             response = self.anthropic_client.messages.create(
                 model=model,
