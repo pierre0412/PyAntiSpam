@@ -22,6 +22,7 @@ class EmailProcessor:
         self.config = config_manager
         self.logger = logging.getLogger(__name__)
         self.clients: Dict[str, EmailClient] = {}
+        self.account_configs: Dict[str, Dict[str, Any]] = {}  # Store account configurations
         self.llm_classifier = LLMClassifier(config_manager.config)
         self.ml_classifier = MLClassifier(config_manager.config)
         self.list_manager = ListManager()
@@ -38,12 +39,18 @@ class EmailProcessor:
         """Initialize email clients for all configured accounts"""
         accounts = self.config.get_email_accounts()
 
+        # Store account configurations for later use
+        self.account_configs = {}
+
         for account in accounts:
             name = account.get('name', 'unknown')
+            # Store the account config for later use (spam_folder, etc.)
+            self.account_configs[name] = account
+
             try:
                 # Get request delay from config (default 0.1 seconds)
                 request_delay = self.config.config.get('email_connection', {}).get('request_delay', 0.1)
-                
+
                 client = EmailClient(
                     server=account['server'],
                     port=account['port'],
@@ -84,10 +91,14 @@ class EmailProcessor:
 
         self.clients.clear()
 
-    def process_account(self, account_name: str, folder: str = "INBOX") -> Dict[str, Any]:
+    def process_account(self, account_name: str, folder: str = "INBOX", account_config: Dict[str, Any] = None) -> Dict[str, Any]:
         """Process emails in specified account and folder"""
         if account_name not in self.clients:
             raise ValueError(f"Account {account_name} not initialized")
+
+        # Use stored account config if not provided
+        if account_config is None:
+            account_config = self.account_configs.get(account_name, {})
 
         client = self.clients[account_name]
         results = {
@@ -105,7 +116,11 @@ class EmailProcessor:
             # Perform spam folder cleanup first
             auto_delete_days = self.config.get("actions.auto_delete_after_days", 0)
             if auto_delete_days > 0:
+                # Use account-specific spam folder if defined, otherwise use global setting
                 spam_folder = self.config.get("actions.move_spam_to_folder", "SPAM_AUTO")
+                if account_config and "spam_folder" in account_config:
+                    spam_folder = account_config["spam_folder"]
+
                 try:
                     deleted_count = client.cleanup_old_spam(spam_folder, auto_delete_days)
                     results["cleanup_deleted"] = deleted_count
@@ -151,7 +166,7 @@ class EmailProcessor:
                     # Take action based on decision
                     if decision["action"] == "SPAM":
                         results["spam_detected"] += 1
-                        if self._handle_spam_email(client, email_id, email_data, decision):
+                        if self._handle_spam_email(client, email_id, email_data, decision, account_config):
                             results["spam_moved"] += 1
                     else:
                         # Email is not spam, preserve unread status if it was originally unread
@@ -445,9 +460,12 @@ class EmailProcessor:
         except Exception as e:
             self.logger.error(f"❌ ERREUR durant le réentraînement ML avec échantillons LLM: {e}")
 
-    def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any]) -> bool:
+    def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any], account_config: Dict[str, Any] = None) -> bool:
         """Handle detected spam email according to configuration"""
+        # Use account-specific spam folder if defined, otherwise use global setting
         spam_folder = self.config.get("actions.move_spam_to_folder", "SPAM_AUTO")
+        if account_config and "spam_folder" in account_config:
+            spam_folder = account_config["spam_folder"]
 
         try:
             # Mark spam email as read before moving (spam should be read)
