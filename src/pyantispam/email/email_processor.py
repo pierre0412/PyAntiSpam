@@ -281,10 +281,10 @@ class EmailProcessor:
 
                 # Log folder names for user reference
                 folder_names = feedback_processor.get_feedback_folder_names()
-                self.logger.info(f"Feedback folders for {account}:")
+                self.logger.info(f"[account: {account}] Feedback folders for {account}:")
                 for purpose, folder in folder_names.items():
                     normalized = client._normalize_folder_name(folder)
-                    self.logger.info(f"  {purpose}: {normalized}")
+                    self.logger.info(f"[account: {account}]   {purpose}: {normalized}")
 
             except Exception as e:
                 self.logger.error(f"Error setting up feedback folders for {account}: {e}")
