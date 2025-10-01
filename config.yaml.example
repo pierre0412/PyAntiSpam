@@ -29,6 +29,7 @@ email_accounts:
   #   username: "your-work@company.com"
   #   password_env: "EMAIL_PASSWORD_WORK"
   #   use_ssl: true
+  #   spam_folder: spam #to define account specific spam folder
 
 # Spam Detection Settings
 detection:
