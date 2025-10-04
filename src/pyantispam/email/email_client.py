@@ -84,7 +84,7 @@ class EmailClient:
                     self.logger.warning(f"Socket error during disconnect: {e}")
             except Exception as e:
                 # Check if this is a broken pipe error that wasn't caught by the OSError handler
-                if (hasattr(e, 'errno') and e.errno == 32) or \
+                if (getattr(e, 'errno', None) == 32) or \
                    "Broken pipe" in str(e) or "[Errno 32]" in str(e) or \
                    "broken pipe" in str(e).lower():
                     self.logger.debug(f"Broken pipe during disconnect handled gracefully: {e}")

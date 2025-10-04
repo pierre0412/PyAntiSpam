@@ -34,7 +34,7 @@ class FeedbackProcessor:
         # Training samples for ML retraining
         self.training_samples = []
 
-    def process_feedback_folders(self, client: EmailClient, account_name: str) -> Dict[str, Any]:
+    def process_feedback_folders(self, client: EmailClient, account_name: str, account_config: dict[str, Any]) -> Dict[str, Any]:
         """Process all feedback folders for an account"""
         results = {
             "account": account_name,
@@ -50,7 +50,7 @@ class FeedbackProcessor:
         for feedback_type, folder_name in self.feedback_folders.items():
             try:
                 folder_results = self._process_feedback_folder(
-                    client, feedback_type, folder_name, account_name
+                    client, feedback_type, folder_name, account_name, account_config
                 )
 
                 # Accumulate results
@@ -120,7 +120,7 @@ class FeedbackProcessor:
             self.logger.error("Failed to persist user feedback override: %s", e)
 
     def _process_feedback_folder(self, client: EmailClient, feedback_type: str,
-                                folder_name: str, account_name: str) -> Dict[str, Any]:
+                                folder_name: str, account_name: str, account_config: dict[str, Any]) -> Dict[str, Any]:
         """Process emails in a specific feedback folder"""
         results = {
             "folder": folder_name,
@@ -161,7 +161,7 @@ class FeedbackProcessor:
 
                     # Process feedback based on folder type
                     feedback_result = self._process_single_feedback(
-                        email_data, feedback_type, client, email_id
+                        email_data, feedback_type, client, email_id, account_config
                     )
 
                     if feedback_result["success"]:
@@ -198,7 +198,7 @@ class FeedbackProcessor:
         return results
 
     def _process_single_feedback(self, email_data: Dict[str, Any], feedback_type: str,
-                               client: EmailClient, email_id: str) -> Dict[str, Any]:
+                               client: EmailClient, email_id: str, account_config: dict[str, Any]) -> Dict[str, Any]:
         """Process a single feedback email"""
         sender_email = email_data.get("sender_email", "")
         sender_domain = email_data.get("sender_domain", "")
@@ -215,7 +215,7 @@ class FeedbackProcessor:
             if feedback_type == "whitelist":
                 # Add sender to whitelist
                 # Prefer domain if it's not a major provider
-                major_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com']
+                major_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'orange.fr', 'free.fr', 'sfr.fr', 'wanadoo.fr']
 
                 if sender_domain and sender_domain not in major_providers:
                     # Add domain
@@ -284,7 +284,7 @@ class FeedbackProcessor:
                 result["ml_sample"] = True
 
             # Route email to appropriate destination based on feedback type
-            destination_folder = self._get_destination_folder(feedback_type)
+            destination_folder = self._get_destination_folder(feedback_type, account_config)
             if self._move_email_to_destination(client, email_id, destination_folder):
                 result["restored"] = True
                 self.logger.info(f"Processed feedback and moved email {email_id} to {destination_folder}")
@@ -299,13 +299,17 @@ class FeedbackProcessor:
 
         return result
 
-    def _get_destination_folder(self, feedback_type: str) -> str:
+    def _get_destination_folder(self, feedback_type: str, account_config: dict[str, Any]) -> str:
         """Get destination folder based on feedback type"""
+        spam_folder = self.config.get("actions.move_spam_to_folder", "spam")
+        if account_config and "spam_folder" in account_config:
+            spam_folder = account_config["spam_folder"]
+
         destinations = {
-            'whitelist': 'INBOX',           # Whitelist → INBOX
-            'blacklist': self.config.get("actions.move_spam_to_folder", "spam"),  # Blacklist → spam folder
-            'not_spam': 'INBOX',            # Not spam → INBOX
-            'is_spam': self.config.get("actions.move_spam_to_folder", "spam")     # Is spam → spam folder
+            'whitelist': 'INBOX',     # Whitelist → INBOX
+            'blacklist': spam_folder, # Blacklist → spam folder
+            'not_spam': 'INBOX',      # Not spam → INBOX
+            'is_spam': spam_folder    # Is spam → spam folder
         }
         return destinations.get(feedback_type, 'INBOX')
 

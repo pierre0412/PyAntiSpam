@@ -200,7 +200,7 @@ class EmailProcessor:
 
         return results
 
-    def process_feedback(self, account_name: str = None) -> Dict[str, Any]:
+    def process_feedback(self, account_name: str) -> Dict[str, Any]:
         """Process user feedback from special folders"""
         if account_name and account_name not in self.clients:
             raise ValueError(f"Account {account_name} not initialized")
@@ -230,7 +230,8 @@ class EmailProcessor:
                 feedback_processor.create_feedback_folders(client)
 
                 # Process feedback
-                results = feedback_processor.process_feedback_folders(client, account)
+                account_config = self.account_configs.get(account, {})
+                results = feedback_processor.process_feedback_folders(client, account, account_config)
 
                 # Accumulate results
                 all_results["accounts_processed"] += 1
@@ -463,7 +464,7 @@ class EmailProcessor:
     def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any], account_config: Dict[str, Any] = None) -> bool:
         """Handle detected spam email according to configuration"""
         # Use account-specific spam folder if defined, otherwise use global setting
-        spam_folder = self.config.get("actions.move_spam_to_folder", "SPAM_AUTO")
+        spam_folder = account_config.get("spam_folder", self.config.get("actions.move_spam_to_folder", "SPAM_AUTO"))
         if account_config and "spam_folder" in account_config:
             spam_folder = account_config["spam_folder"]
 
