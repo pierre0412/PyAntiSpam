@@ -142,12 +142,13 @@ class EmailProcessor:
             for email_id in email_ids:
                 try:
                     email_data = client.fetch_email(email_id)
-                    # Inject account context into email data for logging
-                    email_data['account_name'] = account_name
                     if not email_data:
                         results["errors"] += 1
                         self.logger.debug(f"Skipped invalid or deleted email {email_id}")
                         continue
+
+                    # Inject account context into email data for logging
+                    email_data['account_name'] = account_name
 
                     # Process email through spam detection pipeline
                     import time
