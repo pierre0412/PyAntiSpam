@@ -200,7 +200,7 @@ class EmailProcessor:
 
         return results
 
-    def process_feedback(self, account_name: str) -> Dict[str, Any]:
+    def process_feedback(self, account_name: str = None) -> Dict[str, Any]:
         """Process user feedback from special folders"""
         if account_name and account_name not in self.clients:
             raise ValueError(f"Account {account_name} not initialized")
