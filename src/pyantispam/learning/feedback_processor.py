@@ -151,7 +151,8 @@ class FeedbackProcessor:
 
             self.logger.info(f"[account: {account_name}] Processing {len(email_ids)} feedback emails in {normalized_folder}")
 
-            for email_id in email_ids:
+            # Process in reverse order to avoid ID invalidation after moving emails
+            for email_id in reversed(email_ids):
                 try:
                     # Fetch email data
                     email_data = client.fetch_email(email_id)
