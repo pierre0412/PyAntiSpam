@@ -190,21 +190,27 @@ class EmailClient:
     def _parse_email(self, email_message: EmailMessage, email_id: str) -> Dict[str, Any]:
         """Parse email message into structured data"""
         # Extract sender information
-        sender = str(email_message.get("From", ""))
+        sender = email_message.get("From", "")
+        sender = str(sender) if sender else ""
         sender_email = self._extract_email_address(sender)
         sender_domain = sender_email.split("@")[-1] if "@" in sender_email else ""
 
         # Extract basic headers (convert Header objects to strings)
-        subject = str(email_message.get("Subject", ""))
-        date = str(email_message.get("Date", ""))
-        to = str(email_message.get("To", ""))
-        cc = str(email_message.get("Cc", ""))
+        subject = email_message.get("Subject", "")
+        subject = str(subject) if subject else ""
+        date = email_message.get("Date", "")
+        date = str(date) if date else ""
+        to = email_message.get("To", "")
+        to = str(to) if to else ""
+        cc = email_message.get("Cc", "")
+        cc = str(cc) if cc else ""
 
         # Extract body content
         body = self._extract_body(email_message)
 
         # Convert all raw headers to strings to avoid Header objects
-        raw_headers = {k: str(v) for k, v in email_message.items()}
+        # Handle None values explicitly to avoid converting them to "None" string
+        raw_headers = {k: str(v) if v is not None else "" for k, v in email_message.items()}
 
         return {
             "id": email_id,
