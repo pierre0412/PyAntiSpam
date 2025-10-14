@@ -1,7 +1,7 @@
 """User feedback processing for continuous learning"""
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 import json
 import time
 from pathlib import Path
@@ -10,11 +10,14 @@ from ..filters import ListManager
 from ..ml import MLClassifier
 from ..stats.stats_manager import StatsManager
 
+if TYPE_CHECKING:
+    from ..config import ConfigManager
+
 
 class FeedbackProcessor:
     """Processes user feedback from special folders to improve spam detection"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: "ConfigManager"):
         self.config = config
         self.logger = logging.getLogger(__name__)
 

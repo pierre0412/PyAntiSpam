@@ -4,8 +4,11 @@ import logging
 import pickle
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
+
+if TYPE_CHECKING:
+    from ..config import ConfigManager
 
 try:
     from sklearn.ensemble import RandomForestClassifier
@@ -22,7 +25,7 @@ from .feature_extractor import FeatureExtractor
 class MLClassifier:
     """ML-based spam classifier using Random Forest"""
 
-    def __init__(self, config: Dict[str, Any], data_dir: str = "data"):
+    def __init__(self, config: "ConfigManager", data_dir: str = "data"):
         self.config = config
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(exist_ok=True)

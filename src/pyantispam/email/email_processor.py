@@ -23,8 +23,8 @@ class EmailProcessor:
         self.logger = logging.getLogger(__name__)
         self.clients: Dict[str, EmailClient] = {}
         self.account_configs: Dict[str, Dict[str, Any]] = {}  # Store account configurations
-        self.llm_classifier = LLMClassifier(config_manager.config)
-        self.ml_classifier = MLClassifier(config_manager.config)
+        self.llm_classifier = LLMClassifier(config_manager)
+        self.ml_classifier = MLClassifier(config_manager)
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
@@ -77,7 +77,7 @@ class EmailProcessor:
         """Lazy initialization of feedback processor to avoid circular import"""
         if self.feedback_processor is None:
             from ..learning import FeedbackProcessor
-            self.feedback_processor = FeedbackProcessor(self.config.config)
+            self.feedback_processor = FeedbackProcessor(self.config)
         return self.feedback_processor
 
     def disconnect_all(self):

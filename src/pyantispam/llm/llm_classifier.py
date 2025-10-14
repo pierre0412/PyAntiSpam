@@ -2,8 +2,11 @@
 
 import logging
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import json
+
+if TYPE_CHECKING:
+    from ..config import ConfigManager
 
 try:
     import openai
@@ -19,7 +22,7 @@ except ImportError:
 class LLMClassifier:
     """LLM-based spam classifier supporting OpenAI and Anthropic models"""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: "ConfigManager"):
         self.config = config
         self.logger = logging.getLogger(__name__)
 
