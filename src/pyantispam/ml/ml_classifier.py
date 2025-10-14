@@ -137,6 +137,36 @@ class MLClassifier:
             vector.append(features.get(feature_name, 0.0))
         return np.array(vector)
 
+    def _calculate_sample_weight(self, sample: Dict[str, Any], features: Dict[str, float]) -> float:
+        """
+        Calculate sample weight based on source and sender history.
+
+        Weight strategy:
+        - Default samples: 1.0 (baseline)
+        - User feedback: 3.0 (learn more from corrections)
+        - Recurring sender feedback: 5.0 (learn heavily from patterns)
+        """
+        base_weight = 1.0
+
+        # Check if this is user feedback
+        source = sample.get('source', 'default')
+        if source == 'user_feedback':
+            base_weight = 3.0
+
+        # Boost weight for recurring senders (strong pattern signal)
+        sender_total_feedbacks = features.get('sender_total_feedbacks', 0)
+        is_recurring = features.get('sender_is_recurring_spammer', 0) == 1.0 or \
+                      features.get('sender_is_recurring_ham', 0) == 1.0
+
+        if is_recurring or sender_total_feedbacks >= 3:
+            # This is a recurring sender with established pattern
+            return 5.0
+        elif sender_total_feedbacks >= 2:
+            # Sender has some feedback history
+            return base_weight * 1.5
+
+        return base_weight
+
     def train_with_samples(self, samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Train the model with provided samples"""
         if not sklearn_available:
@@ -146,8 +176,8 @@ class MLClassifier:
             return {"success": False, "error": "Need at least 10 samples for training"}
 
         try:
-            # Extract features and labels
-            X, y = [], []
+            # Extract features, labels, and weights
+            X, y, sample_weights = [], [], []
 
             for sample in samples:
                 features = self.feature_extractor.extract_features(sample['email_data'])
@@ -155,22 +185,28 @@ class MLClassifier:
                 X.append(feature_vector)
                 y.append(1 if sample['is_spam'] else 0)
 
+                # Calculate sample weight based on source and sender history
+                weight = self._calculate_sample_weight(sample, features)
+                sample_weights.append(weight)
+
             X = np.array(X)
             y = np.array(y)
+            sample_weights = np.array(sample_weights)
 
-            # Split data
+            # Split data (including sample weights)
             if len(X) >= 20:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42, stratify=y
+                X_train, X_test, y_train, y_test, weights_train, weights_test = train_test_split(
+                    X, y, sample_weights, test_size=0.2, random_state=42, stratify=y
                 )
             else:
                 X_train, X_test, y_train, y_test = X, X, y, y
+                weights_train, weights_test = sample_weights, sample_weights
 
             # Scale features
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
-            # Train model
+            # Train model with sample weights
             self.model = RandomForestClassifier(
                 n_estimators=100,
                 max_depth=10,
@@ -178,7 +214,7 @@ class MLClassifier:
                 class_weight='balanced'
             )
 
-            self.model.fit(X_train_scaled, y_train)
+            self.model.fit(X_train_scaled, y_train, sample_weight=weights_train)
 
             # Evaluate
             y_pred = self.model.predict(X_test_scaled)
@@ -191,14 +227,24 @@ class MLClassifier:
             # Save training data for future use
             self._save_training_data(samples)
 
+            # Calculate weight statistics
+            weight_stats = {
+                "min": float(np.min(sample_weights)),
+                "max": float(np.max(sample_weights)),
+                "mean": float(np.mean(sample_weights)),
+                "total": float(np.sum(sample_weights))
+            }
+
             self.logger.info(f"Model trained successfully. Accuracy: {accuracy:.3f}")
+            self.logger.info(f"Sample weights - min: {weight_stats['min']:.1f}, max: {weight_stats['max']:.1f}, mean: {weight_stats['mean']:.2f}")
 
             return {
                 "success": True,
                 "accuracy": float(accuracy),
                 "samples_count": len(samples),
                 "spam_count": sum(y),
-                "ham_count": len(y) - sum(y)
+                "ham_count": len(y) - sum(y),
+                "weight_stats": weight_stats
             }
 
         except Exception as e:

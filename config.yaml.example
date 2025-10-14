@@ -41,10 +41,17 @@ detection:
 # Learning and Retraining Settings (IMPLEMENTED)
 learning:
   retrain_threshold: 10            # Retrain ML model after N new feedback samples
-# 5 trés réactif réentraine souvent
-# 10 équilibré réglage par défaut
-# 20 conservateur, plus stable, production, évite surapprentissage
-# 50 trés stable, réentraine rarement, serveur stable, peu de feedback
+  # 5 trés réactif réentraine souvent
+  # 10 équilibré réglage par défaut
+  # 20 conservateur, plus stable, production, évite surapprentissage
+  # 50 trés stable, réentraine rarement, serveur stable, peu de feedback
+
+  # Auto-blacklist/whitelist settings for recurring senders
+  auto_blacklist_threshold: 3      # Auto-blacklist sender after N spam feedbacks
+  auto_whitelist_threshold: 3      # Auto-whitelist sender after N ham feedbacks
+  # When you mark emails from the same sender as spam/ham multiple times,
+  # the sender will be automatically added to blacklist/whitelist.
+  # This helps with recurring spam (e.g., daily newsletters you don't want).
 
 # Note: The following folders are HARDCODED in the program:
 # - PYANTISPAM_IS_SPAM      (move false negatives here - emails that should be spam)

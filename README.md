@@ -8,7 +8,7 @@ Le script peut tourner en continu ou être lancé ponctuellement. Il peut être 
 
 ### ✅ Détection Multi-Niveaux
 - **🥇 Whitelist/Blacklist** : Contrôle manuel prioritaire (emails et domaines entiers)
-- **🥈 Machine Learning** : Random Forest avec 40+ features (mots-clés, structure, domaines suspects)
+- **🥈 Machine Learning** : Random Forest avec 79 features incluant historique sender, analyse temporelle et textuelle avancée
 - **🥉 Large Language Models** : OpenAI GPT et Anthropic Claude pour les cas complexes
 
 ### ✅ Gestion Avancée des Listes
@@ -40,6 +40,8 @@ Le script peut tourner en continu ou être lancé ponctuellement. Il peut être 
 - **Auto-apprentissage** : whitelist/blacklist et amélioration ML
 - **Routage intelligent** : emails corrigés placés correctement
 - **Réentraînement automatique** : modèle ML s'améliore en continu
+- **Auto-blacklist/whitelist** : détection des expéditeurs récurrents
+- **Persistance immédiate** : sauvegarde des échantillons en temps réel
 
 ## Installation
 
@@ -113,14 +115,60 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ### 4. Machine Learning
 
-Le système ML s'initialise automatiquement avec des exemples par défaut. Le modèle Random Forest analyse :
+Le système ML s'initialise automatiquement avec des exemples par défaut. Le modèle Random Forest analyse **79 features** réparties en plusieurs catégories :
 
-**Features extraites (40+) :**
+**🔍 Features d'historique sender (5)** - Apprentissage des patterns récurrents
+- `sender_spam_ratio` : ratio spam/total pour cet expéditeur (feature critique)
+- `sender_total_feedbacks` : nombre de feedbacks utilisateur
+- `sender_days_since_first` : ancienneté de l'expéditeur
+- `sender_is_recurring_spammer` : spam récurrent (≥3 feedbacks)
+- `sender_is_recurring_ham` : légitime récurrent (≥3 feedbacks)
+
+**⏰ Features temporelles (5)** - Patterns d'envoi suspects
+- `temporal_hour_of_day` : heure d'envoi (spam souvent la nuit)
+- `temporal_day_of_week` : jour de la semaine
+- `temporal_is_weekend` : envoyé le weekend
+- `temporal_is_night_time` : envoyé entre 22h et 6h
+- `temporal_is_business_hours` : heures de bureau (9h-17h)
+
+**📊 Features textuelles avancées (5)** - Analyse linguistique
+- `text_entropy` : densité d'information (spam = texte répétitif)
+- `text_unique_word_ratio` : richesse du vocabulaire
+- `text_avg_word_length` : longueur moyenne des mots
+- `text_lexical_diversity` : diversité lexicale
+- `text_repeated_words` : mots répétés >3 fois
+
+**🌐 Features de contenu riche (5)** - Analyse HTML et multimédia
+- `rich_html_to_text_ratio` : ratio HTML/texte
+- `rich_has_images` : présence d'images
+- `rich_has_forms` : formulaires (indicateur phishing)
+- `rich_has_scripts` : scripts JavaScript (suspicieux)
+- `rich_link_density` : densité de liens (liens/100 caractères)
+
+**🔗 Features d'interaction (5)** - Combinaisons de signaux
+- `interaction_marketing_newsletter` : marketing légitime
+- `interaction_suspicious_no_auth` : contenu suspicieux sans authentification
+- `interaction_urgency_money` : urgence + argent (spam classique)
+- `interaction_spammer_suspicious` : spammeur connu + contenu suspicieux
+- `interaction_shouting` : CAPS + multiples !!!
+
+**📝 Features classiques (54)** - Base de détection
 - **Structure** : longueur sujet/contenu, ratio majuscules, ponctuation
 - **Mots-clés spam** : urgence, argent, phishing, marketing, arnaques
 - **URLs & liens** : nombre, domaines suspects (.tk, .ml, .ga, etc.)
 - **Expéditeur** : domaine légitime, caractères spéciaux, longueur
 - **Contenu** : HTML, numéros de téléphone, adresses email
+- **Authentification** : SPF, DKIM, DMARC
+- **Newsletter** : tracking URLs, unsubscribe, images, CTA
+
+**⚖️ Sample Weighting** - Apprentissage intelligent
+Le système pondère les échantillons d'entraînement selon leur importance :
+- Échantillons par défaut : **poids 1.0**
+- Feedbacks utilisateur : **poids 3.0** (3x plus important)
+- Senders récurrents (≥3 feedbacks) : **poids 5.0** (5x plus important)
+- Senders avec historique (≥2 feedbacks) : **poids 1.5x**
+
+Cela permet au modèle d'apprendre **beaucoup plus rapidement** des patterns récurrents comme les newsletters quotidiennes.
 
 **Configuration ML avancée :**
 ```yaml
@@ -129,6 +177,8 @@ detection:
 
 learning:
   retrain_threshold: 10           # Ré-entraîner après N nouveaux exemples
+  auto_blacklist_threshold: 3     # Auto-blacklist après N feedbacks spam
+  auto_whitelist_threshold: 3     # Auto-whitelist après N feedbacks ham
 ```
 
 ## Utilisation
@@ -202,6 +252,68 @@ INBOX.PYANTISPAM_IS_SPAM     # → Corrige ML (spam manqué) + email dans spam
 pyantispam run              # Traite aussi les feedbacks automatiquement
 ```
 
+### Auto-blacklist/whitelist des expéditeurs récurrents
+
+Le système détecte automatiquement les expéditeurs que vous marquez répétitivement comme spam ou légitime :
+
+**Fonctionnement :**
+- Marquez un email de Batiweb comme spam → compteur à 1
+- Marquez un 2ème email de Batiweb comme spam → compteur à 2
+- Marquez un 3ème email de Batiweb comme spam → **🚫 AUTO-BLACKLIST !**
+- Tous les futurs emails de Batiweb seront bloqués automatiquement
+
+**Configuration (config.yaml) :**
+```yaml
+learning:
+  auto_blacklist_threshold: 3     # Auto-blacklist après 3 feedbacks spam
+  auto_whitelist_threshold: 3     # Auto-whitelist après 3 feedbacks ham
+```
+
+**Voir les expéditeurs récurrents :**
+```bash
+# Voir tous les expéditeurs avec feedbacks répétés
+pyantispam recurring-senders
+
+# Voir uniquement les spammeurs récurrents
+pyantispam recurring-senders --spam-only
+
+# Voir uniquement les expéditeurs légitimes
+pyantispam recurring-senders --ham-only
+
+# Seuil minimal de feedbacks (par défaut: 2)
+pyantispam recurring-senders --threshold 5
+
+# Limiter le nombre de résultats (par défaut: 20)
+pyantispam recurring-senders --limit 10
+```
+
+**Exemple de sortie :**
+```
+🔄 EXPÉDITEURS RÉCURRENTS DANS LES FEEDBACKS
+================================================================================
+
+ 1. news@batiweb.com
+    📊 Spam: 5  |  Ham: 0  |  Total: 5
+    🚫 AUTO-BLACKLISTED
+    📅 Last seen: 2025-10-14 08:30 (0 days ago)
+
+ 2. notifications@instagram.com
+    📊 Spam: 0  |  Ham: 4  |  Total: 4
+    ✅ AUTO-WHITELISTED
+    📅 Last seen: 2025-10-13 19:45 (1 days ago)
+
+ 3. promo@marketing.com
+    📊 Spam: 2  |  Ham: 0  |  Total: 2
+    ⚠️  1 more spam feedback(s) until auto-blacklist
+    📅 Last seen: 2025-10-12 10:20 (2 days ago)
+```
+
+**Avantages :**
+- Plus besoin de marquer les mêmes spams chaque jour
+- Historique persistant des feedbacks par expéditeur
+- Détection intelligente des patterns (email vs domaine)
+- Sauvegarde immédiate des échantillons d'entraînement
+
 ### Statistiques et monitoring
 
 ```bash
@@ -237,7 +349,9 @@ pyantispam status
 │   ├── spam_model.pkl   # ✅ Modèle ML entraîné
 │   ├── feature_scaler.pkl # ✅ Normalisation features
 │   ├── spam_stats.json  # ✅ Statistiques de détection et apprentissage
-│   └── training_data.json # ✅ Données d'entraînement ML
+│   ├── training_data.json # ✅ Données d'entraînement ML
+│   ├── sender_feedback_history.json # ✅ Historique feedbacks par expéditeur
+│   └── llm_cache.json   # ✅ Cache persistant des classifications LLM
 ├── config.yaml          # ✅ Configuration principale
 └── .env                 # ✅ Clés API et mots de passe
 ```
@@ -281,6 +395,8 @@ pyantispam stats                            # Statistiques complètes
 pyantispam stats --daily                    # Détails quotidiens
 pyantispam stats --export stats.json       # Export des données
 pyantispam status                           # État du système
+pyantispam recurring-senders                # Expéditeurs récurrents
+pyantispam recurring-senders --spam-only    # Spammeurs récurrents uniquement
 
 # Configuration
 pyantispam setup                            # Configuration initiale
@@ -367,9 +483,10 @@ pyantispam stats --export data/backup.json # Sauvegarde dans data/
 - **Configuration YAML** : gestion centralisée avec validation
 - **Client IMAP robuste** : gestion erreurs, conventions serveurs
 - **Pipeline 3 niveaux** : listes → ML → LLM avec fallbacks
-- **ML Random Forest** : 40+ features, auto-initialisation
+- **ML Random Forest** : 79 features avec historique sender, sample weighting, auto-initialisation
 - **LLM multi-providers** : OpenAI + Anthropic avec prompts optimisés
 - **CLI complète** : toutes les opérations via ligne de commande
+- **Apprentissage continu** : auto-blacklist/whitelist, persistance immédiate, réentraînement intelligent
 
 ### 🚧 Extensions possibles
 - **Interface web** : dashboard pour monitoring et configuration

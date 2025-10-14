@@ -478,5 +478,134 @@ def _show_daily_stats(processor, days):
                     click.echo(f"    {method:13} : {count:,}")
 
 
+@main.command("recurring-senders")
+@click.option('--spam-only', is_flag=True, help="Show only spam senders")
+@click.option('--ham-only', is_flag=True, help="Show only legitimate senders")
+@click.option('--threshold', '-t', default=2, help="Minimum feedback count to show")
+@click.option('--limit', '-l', default=20, help="Maximum number of senders to show")
+@click.pass_context
+def recurring_senders(ctx, spam_only: bool, ham_only: bool, threshold: int, limit: int):
+    """Show senders with recurring feedback patterns"""
+    import json
+    from pathlib import Path
+
+    try:
+        history_file = Path("data/sender_feedback_history.json")
+
+        if not history_file.exists():
+            click.echo("⚠️  No sender feedback history found yet.")
+            click.echo("   Feedback history is created when you process emails in PYANTISPAM_* folders.")
+            return
+
+        with open(history_file, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+
+        if not history:
+            click.echo("⚠️  No sender feedback history found yet.")
+            return
+
+        # Filter and sort senders
+        senders_data = []
+        for sender_email, data in history.items():
+            total_spam = data['spam_count'] + data['blacklist_count']
+            total_ham = data['ham_count'] + data['whitelist_count']
+            total_feedback = total_spam + total_ham
+
+            # Apply filters
+            if total_feedback < threshold:
+                continue
+            if spam_only and total_spam == 0:
+                continue
+            if ham_only and total_ham == 0:
+                continue
+
+            senders_data.append({
+                'email': sender_email,
+                'domain': data['sender_domain'],
+                'spam': total_spam,
+                'ham': total_ham,
+                'total': total_feedback,
+                'first_seen': data['first_seen'],
+                'last_seen': data['last_seen']
+            })
+
+        # Sort by total feedback count
+        senders_data.sort(key=lambda x: x['total'], reverse=True)
+
+        if not senders_data:
+            click.echo("⚠️  No senders match the specified criteria.")
+            return
+
+        # Display results
+        click.echo("🔄 EXPÉDITEURS RÉCURRENTS DANS LES FEEDBACKS")
+        click.echo("=" * 80)
+        click.echo(f"\nShowing top {min(limit, len(senders_data))} senders (threshold: {threshold}+ feedbacks)\n")
+
+        # Load auto-blacklist/whitelist thresholds from config
+        try:
+            config = ConfigManager(ctx.obj['config_path'])
+            auto_bl_threshold = config.config.get("learning", {}).get("auto_blacklist_threshold", 3)
+            auto_wl_threshold = config.config.get("learning", {}).get("auto_whitelist_threshold", 3)
+        except:
+            auto_bl_threshold = 3
+            auto_wl_threshold = 3
+
+        for i, sender in enumerate(senders_data[:limit], 1):
+            # Determine status
+            status_icons = []
+            if sender['spam'] >= auto_bl_threshold:
+                status_icons.append("🚫 AUTO-BLACKLISTED")
+            if sender['ham'] >= auto_wl_threshold:
+                status_icons.append("✅ AUTO-WHITELISTED")
+
+            status_text = " ".join(status_icons) if status_icons else ""
+
+            click.echo(f"{i:2}. {sender['email']}")
+            click.echo(f"    📊 Spam: {sender['spam']}  |  Ham: {sender['ham']}  |  Total: {sender['total']}")
+
+            # Show domain if different from email
+            if sender['domain'] and sender['domain'] not in sender['email']:
+                click.echo(f"    🌐 Domain: {sender['domain']}")
+
+            if status_text:
+                click.echo(f"    {status_text}")
+
+            # Show proximity to thresholds
+            if sender['spam'] > 0 and sender['spam'] < auto_bl_threshold:
+                remaining = auto_bl_threshold - sender['spam']
+                click.echo(f"    ⚠️  {remaining} more spam feedback(s) until auto-blacklist")
+
+            if sender['ham'] > 0 and sender['ham'] < auto_wl_threshold:
+                remaining = auto_wl_threshold - sender['ham']
+                click.echo(f"    ℹ️  {remaining} more ham feedback(s) until auto-whitelist")
+
+            # Show dates
+            from datetime import datetime
+            last_seen_dt = datetime.fromtimestamp(sender['last_seen'])
+            days_ago = (datetime.now() - last_seen_dt).days
+            click.echo(f"    📅 Last seen: {last_seen_dt.strftime('%Y-%m-%d %H:%M')} ({days_ago} days ago)")
+            click.echo()
+
+        click.echo(f"Total senders in history: {len(history)}")
+        click.echo(f"Shown: {min(limit, len(senders_data))} / {len(senders_data)} matching criteria")
+
+        # Show summary
+        total_spam_senders = sum(1 for s in senders_data if s['spam'] > 0)
+        total_ham_senders = sum(1 for s in senders_data if s['ham'] > 0)
+        auto_blacklisted = sum(1 for s in senders_data if s['spam'] >= auto_bl_threshold)
+        auto_whitelisted = sum(1 for s in senders_data if s['ham'] >= auto_wl_threshold)
+
+        click.echo(f"\n📈 SUMMARY:")
+        click.echo(f"   Spam senders: {total_spam_senders}")
+        click.echo(f"   Ham senders: {total_ham_senders}")
+        click.echo(f"   Auto-blacklisted: {auto_blacklisted}")
+        click.echo(f"   Auto-whitelisted: {auto_whitelisted}")
+
+    except Exception as e:
+        click.echo(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 if __name__ == '__main__':
     main()

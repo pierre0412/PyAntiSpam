@@ -2,9 +2,14 @@
 
 import re
 import logging
-from typing import Dict, Any, List
+import time
+import math
+from typing import Dict, Any, List, Optional
 from collections import Counter
+from pathlib import Path
+import json
 import string
+from datetime import datetime
 
 
 class FeatureExtractor:
@@ -12,6 +17,9 @@ class FeatureExtractor:
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.sender_history_file = Path("data/sender_feedback_history.json")
+        self.sender_history_cache = None
+        self.sender_history_cache_time = 0
 
         # Common spam keywords
         self.spam_keywords = {
@@ -49,6 +57,22 @@ class FeatureExtractor:
 
         # Header-based features (if headers available)
         features.update(self._extract_header_features(email_data))
+
+        # NEW: Sender history features (critical for recurring patterns)
+        features.update(self._extract_sender_history_features(email_data))
+
+        # NEW: Temporal features
+        features.update(self._extract_temporal_features(email_data))
+
+        # NEW: Advanced text features
+        subject = email_data.get('subject', '')
+        features.update(self._extract_advanced_text_features(subject, content_text))
+
+        # NEW: Rich content features
+        features.update(self._extract_rich_content_features(content_text))
+
+        # NEW: Interaction features (combinations)
+        features.update(self._extract_interaction_features(features))
 
         return features
 
@@ -326,6 +350,211 @@ class FeatureExtractor:
 
         return features
 
+    def _extract_sender_history_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
+        """Extract features from sender feedback history"""
+        features = {}
+        sender_email = email_data.get('sender_email', '').lower()
+
+        # Load sender history with caching
+        history = self._load_sender_history_cached()
+        sender_stats = history.get(sender_email, {})
+
+        if sender_stats:
+            spam_count = sender_stats.get('spam_count', 0)
+            ham_count = sender_stats.get('ham_count', 0)
+            total_feedbacks = spam_count + ham_count
+
+            # Spam ratio (most critical feature)
+            features['sender_spam_ratio'] = spam_count / total_feedbacks if total_feedbacks > 0 else 0.0
+            features['sender_total_feedbacks'] = float(total_feedbacks)
+
+            # Time-based features
+            first_seen = sender_stats.get('first_seen')
+            if first_seen:
+                try:
+                    first_date = datetime.fromisoformat(first_seen)
+                    days_since_first = (datetime.now() - first_date).days
+                    features['sender_days_since_first'] = float(days_since_first)
+                except:
+                    features['sender_days_since_first'] = 0.0
+            else:
+                features['sender_days_since_first'] = 0.0
+
+            # Recurring spammer indicator
+            features['sender_is_recurring_spammer'] = 1.0 if spam_count >= 3 else 0.0
+            features['sender_is_recurring_ham'] = 1.0 if ham_count >= 3 else 0.0
+        else:
+            # Unknown sender
+            features['sender_spam_ratio'] = 0.0
+            features['sender_total_feedbacks'] = 0.0
+            features['sender_days_since_first'] = 0.0
+            features['sender_is_recurring_spammer'] = 0.0
+            features['sender_is_recurring_ham'] = 0.0
+
+        return features
+
+    def _load_sender_history_cached(self) -> Dict[str, Any]:
+        """Load sender history with 60-second cache"""
+        now = time.time()
+        if self.sender_history_cache is None or (now - self.sender_history_cache_time) > 60:
+            if self.sender_history_file.exists():
+                try:
+                    with open(self.sender_history_file, 'r', encoding='utf-8') as f:
+                        self.sender_history_cache = json.load(f)
+                except Exception as e:
+                    self.logger.warning(f"Failed to load sender history: {e}")
+                    self.sender_history_cache = {}
+            else:
+                self.sender_history_cache = {}
+            self.sender_history_cache_time = now
+        return self.sender_history_cache
+
+    def _extract_temporal_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
+        """Extract time-based features from email"""
+        features = {}
+
+        # Try to get timestamp from email_data
+        timestamp = email_data.get('timestamp') or email_data.get('date')
+
+        if timestamp:
+            try:
+                if isinstance(timestamp, str):
+                    # Parse timestamp string
+                    dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                elif isinstance(timestamp, (int, float)):
+                    dt = datetime.fromtimestamp(timestamp)
+                else:
+                    dt = datetime.now()
+            except:
+                dt = datetime.now()
+        else:
+            dt = datetime.now()
+
+        # Hour of day (0-23)
+        features['temporal_hour_of_day'] = float(dt.hour)
+
+        # Day of week (0=Monday, 6=Sunday)
+        features['temporal_day_of_week'] = float(dt.weekday())
+
+        # Weekend indicator
+        features['temporal_is_weekend'] = 1.0 if dt.weekday() >= 5 else 0.0
+
+        # Night time indicator (10pm - 6am)
+        features['temporal_is_night_time'] = 1.0 if dt.hour >= 22 or dt.hour < 6 else 0.0
+
+        # Business hours (9am - 5pm, Mon-Fri)
+        features['temporal_is_business_hours'] = 1.0 if (dt.weekday() < 5 and 9 <= dt.hour < 17) else 0.0
+
+        return features
+
+    def _extract_advanced_text_features(self, subject: str, content: str) -> Dict[str, float]:
+        """Extract advanced text analysis features"""
+        features = {}
+
+        combined_text = f"{subject} {content}".lower()
+        words = combined_text.split()
+
+        if not words:
+            return {
+                'text_entropy': 0.0,
+                'text_unique_word_ratio': 0.0,
+                'text_avg_word_length': 0.0,
+                'text_lexical_diversity': 0.0,
+                'text_repeated_words': 0.0
+            }
+
+        # Text entropy (information density)
+        word_freq = Counter(words)
+        total_words = len(words)
+        entropy = 0.0
+        for count in word_freq.values():
+            prob = count / total_words
+            entropy -= prob * math.log2(prob) if prob > 0 else 0
+        features['text_entropy'] = entropy
+
+        # Unique word ratio (vocabulary richness)
+        features['text_unique_word_ratio'] = len(word_freq) / total_words if total_words > 0 else 0.0
+
+        # Average word length
+        features['text_avg_word_length'] = sum(len(w) for w in words) / total_words if total_words > 0 else 0.0
+
+        # Lexical diversity (unique words / total words)
+        features['text_lexical_diversity'] = len(set(words)) / total_words if total_words > 0 else 0.0
+
+        # Repeated word patterns (spam often repeats words)
+        repeated_count = sum(1 for count in word_freq.values() if count > 3)
+        features['text_repeated_words'] = float(repeated_count)
+
+        return features
+
+    def _extract_rich_content_features(self, content: str) -> Dict[str, float]:
+        """Extract features from rich content (HTML, attachments, etc.)"""
+        features = {}
+
+        if not content:
+            return {
+                'rich_html_to_text_ratio': 0.0,
+                'rich_has_images': 0.0,
+                'rich_has_forms': 0.0,
+                'rich_has_scripts': 0.0,
+                'rich_link_density': 0.0
+            }
+
+        # HTML to text ratio
+        html_pattern = r'<[^>]+>'
+        html_tags = re.findall(html_pattern, content)
+        html_length = sum(len(tag) for tag in html_tags)
+        text_length = len(content) - html_length
+        features['rich_html_to_text_ratio'] = html_length / len(content) if len(content) > 0 else 0.0
+
+        # Image tags
+        features['rich_has_images'] = 1.0 if re.search(r'<img[^>]*>', content, re.IGNORECASE) else 0.0
+
+        # Form tags (phishing indicator)
+        features['rich_has_forms'] = 1.0 if re.search(r'<form[^>]*>', content, re.IGNORECASE) else 0.0
+
+        # Script tags (suspicious)
+        features['rich_has_scripts'] = 1.0 if re.search(r'<script[^>]*>', content, re.IGNORECASE) else 0.0
+
+        # Link density (links per 100 characters)
+        url_pattern = r'https?://[^\s<>\"{}|\\^`[\]]+'
+        url_count = len(re.findall(url_pattern, content))
+        features['rich_link_density'] = (url_count * 100) / len(content) if len(content) > 0 else 0.0
+
+        return features
+
+    def _extract_interaction_features(self, features: Dict[str, float]) -> Dict[str, float]:
+        """Extract interaction features (combinations of existing features)"""
+        interaction_features = {}
+
+        # Marketing newsletter with unsubscribe link (legitimate marketing)
+        has_marketing = features.get('content_marketing_keywords', 0) > 0
+        has_newsletter = features.get('content_newsletter_phrases', 0) > 0
+        interaction_features['interaction_marketing_newsletter'] = 1.0 if (has_marketing and has_newsletter) else 0.0
+
+        # Suspicious content without authentication
+        has_suspicious = features.get('content_suspicious_keywords', 0) > 0
+        no_auth = (features.get('auth_spf_pass', 0) == 0 and
+                   features.get('auth_dkim_pass', 0) == 0 and
+                   features.get('auth_dmarc_pass', 0) == 0)
+        interaction_features['interaction_suspicious_no_auth'] = 1.0 if (has_suspicious and no_auth) else 0.0
+
+        # Urgency with money keywords (classic spam)
+        has_urgency = features.get('content_urgency_keywords', 0) > 0
+        has_money = features.get('content_money_keywords', 0) > 0
+        interaction_features['interaction_urgency_money'] = 1.0 if (has_urgency and has_money) else 0.0
+
+        # Known spammer with suspicious content
+        is_spammer = features.get('sender_is_recurring_spammer', 0) == 1.0
+        interaction_features['interaction_spammer_suspicious'] = 1.0 if (is_spammer and has_suspicious) else 0.0
+
+        # High caps ratio with many exclamations (shouting)
+        high_caps = features.get('subject_caps_ratio', 0) > 0.5
+        many_exclamations = features.get('subject_exclamation_count', 0) > 2
+        interaction_features['interaction_shouting'] = 1.0 if (high_caps and many_exclamations) else 0.0
+
+        return interaction_features
+
     def get_feature_names(self) -> List[str]:
         """Get list of all possible feature names"""
         # This should match the features extracted above
@@ -364,6 +593,37 @@ class FeatureExtractor:
         feature_names.extend([
             'content_tracking_urls', 'content_newsletter_phrases', 'content_image_count',
             'content_social_links', 'content_cta_count', 'content_price_indicators'
+        ])
+
+        # Sender history features
+        feature_names.extend([
+            'sender_spam_ratio', 'sender_total_feedbacks', 'sender_days_since_first',
+            'sender_is_recurring_spammer', 'sender_is_recurring_ham'
+        ])
+
+        # Temporal features
+        feature_names.extend([
+            'temporal_hour_of_day', 'temporal_day_of_week', 'temporal_is_weekend',
+            'temporal_is_night_time', 'temporal_is_business_hours'
+        ])
+
+        # Advanced text features
+        feature_names.extend([
+            'text_entropy', 'text_unique_word_ratio', 'text_avg_word_length',
+            'text_lexical_diversity', 'text_repeated_words'
+        ])
+
+        # Rich content features
+        feature_names.extend([
+            'rich_html_to_text_ratio', 'rich_has_images', 'rich_has_forms',
+            'rich_has_scripts', 'rich_link_density'
+        ])
+
+        # Interaction features
+        feature_names.extend([
+            'interaction_marketing_newsletter', 'interaction_suspicious_no_auth',
+            'interaction_urgency_money', 'interaction_spammer_suspicious',
+            'interaction_shouting'
         ])
 
         return sorted(feature_names)

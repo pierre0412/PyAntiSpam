@@ -34,6 +34,14 @@ class FeedbackProcessor:
         # Training samples for ML retraining
         self.training_samples = []
 
+        # Recurring sender detection
+        self.sender_feedback_history_file = Path("data/sender_feedback_history.json")
+        self.sender_feedback_history = self._load_sender_history()
+
+        # Auto-blacklist/whitelist thresholds
+        self.auto_blacklist_threshold = config.get("learning.auto_blacklist_threshold", 3)
+        self.auto_whitelist_threshold = config.get("learning.auto_whitelist_threshold", 3)
+
     def process_feedback_folders(self, client: EmailClient, account_name: str, account_config: dict[str, Any]) -> Dict[str, Any]:
         """Process all feedback folders for an account"""
         results = {
@@ -213,6 +221,9 @@ class FeedbackProcessor:
         }
 
         try:
+            # Track sender feedback and check for auto-actions
+            auto_action = self._track_sender_feedback(sender_email, sender_domain, feedback_type)
+
             if feedback_type == "whitelist":
                 # Add sender to whitelist
                 # Prefer domain if it's not a major provider
@@ -230,10 +241,13 @@ class FeedbackProcessor:
                 result["action"] = "whitelist"
 
                 # Add as training sample (not spam)
-                self.training_samples.append({
+                training_sample = {
                     "email_data": email_data,
                     "is_spam": False
-                })
+                }
+                self.training_samples.append(training_sample)
+                # Persist immediately to disk
+                self._persist_training_sample(training_sample)
                 result["ml_sample"] = True
 
             elif feedback_type == "blacklist":
@@ -252,37 +266,76 @@ class FeedbackProcessor:
                 result["action"] = "blacklist"
 
                 # Add as training sample (spam)
-                self.training_samples.append({
+                training_sample = {
                     "email_data": email_data,
                     "is_spam": True
-                })
+                }
+                self.training_samples.append(training_sample)
+                # Persist immediately to disk
+                self._persist_training_sample(training_sample)
                 result["ml_sample"] = True
 
             elif feedback_type == "not_spam":
                 # This was incorrectly marked as spam
                 # Add as training sample (not spam)
-                self.training_samples.append({
+                training_sample = {
                     "email_data": email_data,
                     "is_spam": False
-                })
+                }
+                self.training_samples.append(training_sample)
+                # Persist immediately to disk
+                self._persist_training_sample(training_sample)
+
                 # Persist a KEEP override for this exact email fingerprint
                 self._update_llm_cache_override(email_data, is_spam=False, reason="User feedback: not spam")
                 result["action"] = "correction"
                 result["item_added"] = "ml_training_ham"
                 result["ml_sample"] = True
 
+                # Auto-whitelist if threshold reached
+                if auto_action["should_whitelist"] and self._should_add_to_list(sender_email, sender_domain, "whitelist"):
+                    major_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com', 'orange.fr', 'free.fr', 'sfr.fr', 'wanadoo.fr']
+                    if sender_domain and sender_domain not in major_providers:
+                        self.list_manager.add_to_whitelist(sender_domain, "domain")
+                        result["item_added"] += f" + AUTO_WHITELIST:domain:{sender_domain}"
+                        self.logger.warning(f"🎯 AUTO-WHITELIST: Added {sender_domain} (reason: {auto_action['reason']})")
+                    else:
+                        self.list_manager.add_to_whitelist(sender_email, "email")
+                        result["item_added"] += f" + AUTO_WHITELIST:email:{sender_email}"
+                        self.logger.warning(f"🎯 AUTO-WHITELIST: Added {sender_email} (reason: {auto_action['reason']})")
+
             elif feedback_type == "is_spam":
                 # This should have been marked as spam
                 # Add as training sample (spam)
-                self.training_samples.append({
+                training_sample = {
                     "email_data": email_data,
                     "is_spam": True
-                })
+                }
+                self.training_samples.append(training_sample)
+                # Persist immediately to disk
+                self._persist_training_sample(training_sample)
+
                 # Persist a SPAM override for this exact email fingerprint
                 self._update_llm_cache_override(email_data, is_spam=True, reason="User feedback: is spam")
                 result["action"] = "correction"
                 result["item_added"] = "ml_training_spam"
                 result["ml_sample"] = True
+
+                # Auto-blacklist if threshold reached
+                if auto_action["should_blacklist"] and self._should_add_to_list(sender_email, sender_domain, "blacklist"):
+                    # For recurring spam, prefer adding the email address to be more specific
+                    # But add domain for suspicious TLDs
+                    suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.top', '.gq']
+
+                    if any(sender_domain.endswith(tld) for tld in suspicious_tlds):
+                        self.list_manager.add_to_blacklist(sender_domain, "domain")
+                        result["item_added"] += f" + AUTO_BLACKLIST:domain:{sender_domain}"
+                        self.logger.warning(f"🚫 AUTO-BLACKLIST: Added {sender_domain} (reason: {auto_action['reason']})")
+                    else:
+                        # Add email for normal domains (like batiweb.com, instagram.com)
+                        self.list_manager.add_to_blacklist(sender_email, "email")
+                        result["item_added"] += f" + AUTO_BLACKLIST:email:{sender_email}"
+                        self.logger.warning(f"🚫 AUTO-BLACKLIST: Added {sender_email} (reason: {auto_action['reason']})")
 
             # Route email to appropriate destination based on feedback type
             destination_folder = self._get_destination_folder(feedback_type, account_config)
@@ -382,3 +435,113 @@ class FeedbackProcessor:
     def get_feedback_folder_names(self) -> Dict[str, str]:
         """Get normalized feedback folder names for display"""
         return self.feedback_folders.copy()
+
+    def _load_sender_history(self) -> Dict[str, Dict[str, Any]]:
+        """Load sender feedback history from disk"""
+        try:
+            if self.sender_feedback_history_file.exists():
+                with open(self.sender_feedback_history_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            self.logger.warning(f"Could not load sender feedback history: {e}")
+        return {}
+
+    def _save_sender_history(self):
+        """Save sender feedback history to disk"""
+        try:
+            self.sender_feedback_history_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.sender_feedback_history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.sender_feedback_history, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.logger.error(f"Failed to save sender feedback history: {e}")
+
+    def _track_sender_feedback(self, sender_email: str, sender_domain: str, feedback_type: str) -> Dict[str, Any]:
+        """Track feedback for a sender and return auto-action recommendation"""
+        # Use email as primary key
+        key = sender_email
+
+        if key not in self.sender_feedback_history:
+            self.sender_feedback_history[key] = {
+                "sender_email": sender_email,
+                "sender_domain": sender_domain,
+                "spam_count": 0,
+                "ham_count": 0,
+                "whitelist_count": 0,
+                "blacklist_count": 0,
+                "first_seen": time.time(),
+                "last_seen": time.time()
+            }
+
+        history = self.sender_feedback_history[key]
+        history["last_seen"] = time.time()
+
+        # Increment counters
+        if feedback_type == "is_spam":
+            history["spam_count"] += 1
+        elif feedback_type == "not_spam":
+            history["ham_count"] += 1
+        elif feedback_type == "whitelist":
+            history["whitelist_count"] += 1
+        elif feedback_type == "blacklist":
+            history["blacklist_count"] += 1
+
+        # Save updated history
+        self._save_sender_history()
+
+        # Determine auto-action
+        auto_action = {
+            "should_blacklist": False,
+            "should_whitelist": False,
+            "reason": ""
+        }
+
+        # Check for auto-blacklist (spam marked multiple times)
+        total_spam_feedback = history["spam_count"] + history["blacklist_count"]
+        if total_spam_feedback >= self.auto_blacklist_threshold:
+            auto_action["should_blacklist"] = True
+            auto_action["reason"] = f"Sender marked as spam {total_spam_feedback} times"
+
+        # Check for auto-whitelist (ham marked multiple times)
+        total_ham_feedback = history["ham_count"] + history["whitelist_count"]
+        if total_ham_feedback >= self.auto_whitelist_threshold:
+            auto_action["should_whitelist"] = True
+            auto_action["reason"] = f"Sender marked as legitimate {total_ham_feedback} times"
+
+        return auto_action
+
+    def _persist_training_sample(self, sample: Dict[str, Any]):
+        """Immediately persist a training sample to training_data.json"""
+        try:
+            training_data_file = Path("data/training_data.json")
+            training_data_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Load existing samples
+            existing_samples = []
+            if training_data_file.exists():
+                try:
+                    with open(training_data_file, 'r', encoding='utf-8') as f:
+                        existing_samples = json.load(f)
+                    if not isinstance(existing_samples, list):
+                        existing_samples = []
+                except json.JSONDecodeError:
+                    self.logger.warning("Training data file corrupted, creating new one")
+                    existing_samples = []
+
+            # Add new sample
+            existing_samples.append(sample)
+
+            # Save back to file
+            with open(training_data_file, 'w', encoding='utf-8') as f:
+                json.dump(existing_samples, f, indent=2, ensure_ascii=False)
+
+            self.logger.debug(f"Persisted training sample to disk (total: {len(existing_samples)})")
+        except Exception as e:
+            self.logger.error(f"Failed to persist training sample: {e}")
+
+    def _should_add_to_list(self, sender_email: str, sender_domain: str, list_type: str) -> bool:
+        """Check if sender is already in whitelist or blacklist"""
+        if list_type == "blacklist":
+            return self.list_manager.is_blacklisted(sender_email, sender_domain) is None
+        elif list_type == "whitelist":
+            return self.list_manager.is_whitelisted(sender_email, sender_domain) is None
+        return True
