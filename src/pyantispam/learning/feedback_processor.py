@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 class FeedbackProcessor:
     """Processes user feedback from special folders to improve spam detection"""
 
-    def __init__(self, config: "ConfigManager"):
+    def __init__(self, config: "ConfigManager", llm_cache: Optional[Dict[str, Any]] = None):
         self.config = config
         self.logger = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ class FeedbackProcessor:
 
         # Training samples for ML retraining
         self.training_samples = []
+
+        # LLM cache reference (shared with EmailProcessor for immediate updates)
+        self.llm_cache = llm_cache if llm_cache is not None else {}
 
         # Recurring sender detection
         self.sender_feedback_history_file = Path("data/sender_feedback_history.json")
@@ -95,11 +98,31 @@ class FeedbackProcessor:
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
     def _update_llm_cache_override(self, email_data: Dict[str, Any], is_spam: bool, reason: str):
-        """Persist a user feedback override into the LLM cache file"""
+        """Update user feedback override in both memory cache and disk file"""
         try:
+            fingerprint = self._compute_email_fingerprint(email_data)
+            entry = {
+                "action": "SPAM" if is_spam else "KEEP",
+                "reason": reason,
+                "confidence": 1.0,
+                "method": "user_feedback",
+                "override": True,
+                "timestamp": time.time()
+            }
+
+            # Step 1: Update in-memory cache immediately (shared with EmailProcessor)
+            # Remove timestamp for in-memory cache (EmailProcessor doesn't use it)
+            memory_entry = entry.copy()
+            memory_entry.pop('timestamp', None)
+            self.llm_cache[fingerprint] = memory_entry
+            self.logger.debug(f"Updated in-memory cache for fingerprint: {fingerprint[:8]}")
+
+            # Step 2: Persist to disk file (with timestamp for age tracking)
             cache_config = self.config.get('llm', {}).get('cache', {})
             if cache_config.get('enabled', True) is False:
+                self.logger.debug("LLM cache persistence disabled in config")
                 return
+
             cache_file_path = cache_config.get('file_path', 'data/llm_cache.json')
             cache_path = Path(cache_file_path)
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,23 +135,14 @@ class FeedbackProcessor:
                 except Exception:
                     cache_data = {}
 
-            fingerprint = self._compute_email_fingerprint(email_data)
-            entry = {
-                "action": "SPAM" if is_spam else "KEEP",
-                "reason": reason,
-                "confidence": 1.0,
-                "method": "user_feedback",
-                "override": True,
-                "timestamp": time.time()
-            }
             cache_data[fingerprint] = entry
 
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2, ensure_ascii=False)
 
-            self.logger.info("Persisted user feedback override to cache for fingerprint: %s", fingerprint[:8])
+            self.logger.info(f"Persisted user feedback override to disk for fingerprint: {fingerprint[:8]}")
         except Exception as e:
-            self.logger.error("Failed to persist user feedback override: %s", e)
+            self.logger.error(f"Failed to update user feedback override: {e}")
 
     def _process_feedback_folder(self, client: EmailClient, feedback_type: str,
                                 folder_name: str, account_name: str, account_config: dict[str, Any]) -> Dict[str, Any]:

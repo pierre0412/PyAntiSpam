@@ -77,7 +77,8 @@ class EmailProcessor:
         """Lazy initialization of feedback processor to avoid circular import"""
         if self.feedback_processor is None:
             from ..learning import FeedbackProcessor
-            self.feedback_processor = FeedbackProcessor(self.config)
+            # Pass shared LLM cache for immediate feedback updates
+            self.feedback_processor = FeedbackProcessor(self.config, self.processed_emails_cache)
         return self.feedback_processor
 
     def disconnect_all(self):
