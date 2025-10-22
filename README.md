@@ -495,9 +495,3 @@ pyantispam stats --export data/backup.json # Sauvegarde dans data/
 - **Règles personnalisées** : filtres utilisateur scriptables
 - **Notifications** : alertes sur détections importantes
 - **Métriques** : statistiques et performance des modèles
-
-## Licence
-
-MIT
-
-## 
