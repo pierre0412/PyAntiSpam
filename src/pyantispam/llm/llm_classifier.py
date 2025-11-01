@@ -18,6 +18,11 @@ try:
 except ImportError:
     anthropic = None
 
+try:
+    from mistralai import Mistral
+except ImportError:
+    Mistral = None
+
 
 class LLMClassifier:
     """LLM-based spam classifier supporting OpenAI and Anthropic models"""
@@ -53,14 +58,23 @@ class LLMClassifier:
             except Exception as e:
                 self.logger.warning(f"Failed to initialize Anthropic client: {e}")
 
-        if not self.openai_client and not self.anthropic_client:
+        # Mistral client
+        mistral_api_key = os.getenv('MISTRAL_API_KEY')
+        if mistral_api_key and Mistral:
+            try:
+                self.mistral_client = Mistral(api_key=mistral_api_key)
+                self.logger.info("Mistral client initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize Mistral client: {e}")
+
+        if not self.openai_client and not self.anthropic_client and not self.mistral_client:
             self.logger.warning("No LLM clients initialized. Please set API keys in environment variables.")
 
     def classify(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify email as spam or not using LLM"""
 
         # Check if any client is available
-        if not self.openai_client and not self.anthropic_client:
+        if not self.openai_client and not self.anthropic_client and not self.mistral_client:
             return {
                 "action": "KEEP",
                 "reason": "No LLM API keys configured",
@@ -78,12 +92,16 @@ class LLMClassifier:
             return self._classify_with_anthropic(email_text, email_data)
         elif provider == "openai" and self.openai_client:
             return self._classify_with_openai(email_text, email_data)
+        elif provider == "MistralAI" and self.mistral_client:
+            return self._classify_with_mistralai(email_text, email_data)
         else:
             # Fallback to any available client
             if self.openai_client:
                 return self._classify_with_openai(email_text, email_data)
             elif self.anthropic_client:
                 return self._classify_with_anthropic(email_text, email_data)
+            elif self.mistral_client:
+                return self._classify_with_mistralai(email_text, email_data)
 
         return {
             "action": "KEEP",
@@ -355,6 +373,86 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 "method": "llm_anthropic_error"
             }
 
+    def _classify_with_mistralai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Classify using MistralAI API"""
+        try:
+            model = self.config.get("llm.model", "mistral-medium-latest")
+
+            system_prompt = (
+                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text or markdown.\n"
+                "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
+                "SPAM INDICATORS (be aggressive on detection):\n"
+                "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
+                "brand impersonation (banks, social media, services), suspicious authentication requests\n"
+                "• MALWARE/VIRUS: suspicious attachments (.exe, .zip, .scr), shortened/suspicious URLs, "
+                "download prompts, fake software updates, malicious redirects\n"
+                "• MARKETING/COMMERCIAL: unsolicited newsletters, promotional blasts, sales pitches, "
+                "unsubscribe from unknown lists, bulk commercial content, affiliate marketing\n"
+                "• SCAMS: money transfers, crypto schemes, inheritance scams, lottery wins, "
+                "investment opportunities, romance scams, fake charities\n"
+                "• SOCIAL ENGINEERING: urgent action required, fear tactics, authority impersonation, "
+                "personal info requests, pressure to click/download/respond quickly\n"
+                "• TECHNICAL: domain spoofing, reply-to mismatches, poor SPF/DKIM, suspicious headers\n"
+                "• DOMAIN SPOOFING: brand mentions in subject/content but sender domain doesn't match "
+                "(e.g., 'OVH' email from ovhcloud@gmail.com, 'Crédit Agricole' from creditagrlcole.fr)\n\n"
+                "LEGITIMATE indicators: transactional emails from known services, expected communications, "
+                "proper authentication, recognized brands with matching domains.\n\n"
+                "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
+                "Examples: {\"is_spam\":true,\"confidence\":0.95,\"reason\":\"Phishing: fake bank login with urgent tone\"} "
+                "| {\"is_spam\":true,\"confidence\":0.87,\"reason\":\"Marketing: unsolicited promotional blast\"}"
+            )
+            user_prompt = (
+                "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
+                f"{email_text}\n\n"
+                "Rappels: **retournes un JSON strict, minifié, champs exacts: is_spam, confidence, reason.**"
+            )
+
+            response = self.mistral_client.chat.complete(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                stream=False,
+                temperature=0.1,
+                max_tokens=200
+            )
+
+            result_text = response.choices[0].message.content.strip()
+
+            # Try to parse JSON response
+            try:
+                result = json.loads(result_text)
+                is_spam = result.get("is_spam", False)
+                confidence = max(0.0, min(1.0, result.get("confidence", 0.5)))
+                reason = result.get("reason", "LLM analysis")
+
+                return {
+                    "action": "SPAM" if is_spam else "KEEP",
+                    "reason": f"MistralAI: {reason}",
+                    "confidence": confidence,
+                    "method": "llm_mistralai"
+                }
+
+            except json.JSONDecodeError:
+                # Fallback if JSON parsing fails
+                is_spam = "spam" in result_text.lower() or "yes" in result_text.lower()
+                return {
+                    "action": "SPAM" if is_spam else "KEEP",
+                    "reason": f"MistralAI: {result_text[:100]}",
+                    "confidence": 0.7,
+                    "method": "llm_mistralai"
+                }
+
+        except Exception as e:
+            self.logger.error(f"MistralAI classification error: {e}")
+            return {
+                "action": "KEEP",
+                "reason": f"MistralAI error: {str(e)[:50]}",
+                "confidence": 0.5,
+                "method": "llm_mistralai_error"
+            }
+
     def is_available(self) -> bool:
         """Check if LLM classification is available"""
-        return self.openai_client is not None or self.anthropic_client is not None
+        return self.openai_client is not None or self.anthropic_client is not None or self.mistral_client is not None
