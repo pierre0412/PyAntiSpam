@@ -137,6 +137,7 @@ class EmailProcessor:
 
             # Get unread emails (or all emails for initial scan) using safe method
             email_ids = client.get_email_ids("UNSEEN")  # Only unread emails
+            email_ids.reverse()
             self.logger.info(f"Found {len(email_ids)} unread emails in {account_name}/{folder}")
 
             # Process each email
@@ -320,9 +321,6 @@ class EmailProcessor:
         sender_email = email_data.get("sender_email", "")
         sender_domain = email_data.get("sender_domain", "")
 
-        # TODO: Implement actual spam detection logic
-        # For now, this is a placeholder that demonstrates the structure
-
         # Step 1: Check whitelist/blacklist (highest priority)
         whitelist_result = self._check_whitelist(sender_email, sender_domain)
         if whitelist_result:
@@ -486,8 +484,6 @@ class EmailProcessor:
 
     def _log_decision(self, email_data: Dict[str, Any], decision: Dict[str, Any]):
         """Log spam detection decision"""
-        # TODO: Implement detailed decision logging
-        # This will be implemented with the logging module
         account = email_data.get('account_name', 'unknown')
         self.logger.info(
             f"[account: {account}] Email decision: {decision['action']} | "

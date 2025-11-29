@@ -7,7 +7,6 @@ set -e
 IMAGE_NAME="pyantispam:latest"
 CONTAINER_NAME="pyantispam"
 DATA_DIR="./data"
-LOGS_DIR="./logs"
 CONFIG_FILE="./config.yaml"
 ENV_FILE="./.env"
 
@@ -60,8 +59,8 @@ check_prerequisites() {
         touch "$ENV_FILE"
     fi
 
-    # Créer les répertoires nécessaires
-    mkdir -p "$DATA_DIR" "$LOGS_DIR"
+    # Créer le répertoire data (les logs seront dans data/logs/)
+    mkdir -p "$DATA_DIR"
 
     log_info "Prérequis OK ✓"
 }
@@ -104,7 +103,6 @@ run_with_docker() {
         -v "$(pwd)/$CONFIG_FILE:/app/config.yaml:ro" \
         -v "$(pwd)/$ENV_FILE:/app/.env:ro" \
         -v "$(pwd)/$DATA_DIR:/app/data" \
-        -v "$(pwd)/$LOGS_DIR:/app/logs" \
         "$IMAGE_NAME"
 
     log_info "Container démarré: $CONTAINER_NAME ✓"

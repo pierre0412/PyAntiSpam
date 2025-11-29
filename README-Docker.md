@@ -27,19 +27,20 @@ PyAntiSpam fonctionne en mode « daemon » dans le conteneur et lit sa configura
 ---
 
 ## 🗂️ Répertoires et fichiers persistants
-Les chemins côté hôte sont montés dans le conteneur pour conserver l’état:
+Les chemins côté hôte sont montés dans le conteneur pour conserver l'état:
 - `./config.yaml` → `/app/config.yaml` (lecture seule)
 - `./.env` → `/app/.env` (lecture seule)
-- `./data/` → `/app/data` (cache LLM, données d’apprentissage…)
-- `./logs/` → `/app/logs` (journaux)
+- `./data/` → `/app/data` (listes, modèles ML, cache LLM, logs rotatifs…)
 
 Créez ces éléments si besoin:
 
 ```
-mkdir -p data logs
+mkdir -p data
 cp config.yaml.example config.yaml   # si vous partez de zéro
 cp .env.example .env                 # si disponible, sinon créez .env
 ```
+
+**Note** : Les logs sont maintenant stockés dans `data/logs/` avec rotation automatique. Le dossier est créé automatiquement au premier lancement.
 
 ---
 
@@ -114,14 +115,28 @@ Commandes principales:
 ---
 
 ## 🧪 Vérifier que tout fonctionne
-- Le conteneur expose un healthcheck interne; vous pouvez vérifier l’état avec:
+- Le conteneur expose un healthcheck interne; vous pouvez vérifier l'état avec:
 
 ```
 docker ps
 ```
 
-- Les décisions et événements sont journalisés dans `./logs/` (par ex. `spam_decisions.log`).
+- Les logs sont stockés dans `./data/logs/` avec rotation automatique :
+  - `data/logs/spam_decisions.log` : Décisions spam/ham uniquement (audit)
+  - `data/logs/pyantispam.log` : Tous les événements système (debug complet)
 - Le cache LLM persistant est dans `./data/llm_cache.json` si activé dans `config.yaml`.
+
+**Consulter les logs** :
+```bash
+# Suivre les décisions en temps réel
+tail -F data/logs/spam_decisions.log
+
+# Suivre les logs système
+tail -F data/logs/pyantispam.log
+
+# Depuis le conteneur
+docker compose exec pyantispam tail -f /app/data/logs/spam_decisions.log
+```
 
 ---
 
@@ -138,11 +153,13 @@ ports:
 ---
 
 ## 📦 Sauvegardes et persistance
-Sauvegardez régulièrement `data/` et `logs/`. Exemple de backup simple:
+Sauvegardez régulièrement `data/` (qui inclut désormais les logs). Exemple de backup simple:
 
 ```
-tar czf backup-$(date +%F).tar.gz data logs config.yaml
+tar czf backup-$(date +%F).tar.gz data config.yaml
 ```
+
+**Note** : Les logs sont dans `data/logs/` avec rotation automatique (pas besoin de dossier `logs/` séparé).
 
 ---
 

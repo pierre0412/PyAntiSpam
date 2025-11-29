@@ -331,6 +331,38 @@ pyantispam stats --export backup_stats.json
 pyantispam status
 ```
 
+### Consultation des logs
+
+Les logs sont automatiquement écrits dans `data/logs/` avec rotation automatique :
+
+```bash
+# Suivre les décisions spam en temps réel (recommandé pour daemon)
+tail -F data/logs/spam_decisions.log
+
+# Suivre tous les logs système (debug, erreurs)
+tail -F data/logs/pyantispam.log
+
+# Afficher les 100 dernières lignes
+tail -n 100 data/logs/spam_decisions.log
+
+# Rechercher des erreurs
+grep ERROR data/logs/pyantispam.log
+
+# Rechercher les spams détectés
+grep "SPAM" data/logs/spam_decisions.log
+
+# Filtrer par compte email
+grep "\[account: personal\]" data/logs/spam_decisions.log
+```
+
+**Types de logs** :
+- `data/logs/spam_decisions.log` : Décisions uniquement (spam/ham), format simple pour audit
+- `data/logs/pyantispam.log` : Tous les événements système avec noms de modules (debug complet)
+
+**Rotation automatique** :
+- Logs système : 10 MB par fichier, 5 fichiers conservés (50 MB total)
+- Logs décisions : 20 MB par fichier, 10 fichiers conservés (200 MB total)
+
 ## Architecture
 
 ```
@@ -351,7 +383,10 @@ pyantispam status
 │   ├── spam_stats.json  # ✅ Statistiques de détection et apprentissage
 │   ├── training_data.json # ✅ Données d'entraînement ML
 │   ├── sender_feedback_history.json # ✅ Historique feedbacks par expéditeur
-│   └── llm_cache.json   # ✅ Cache persistant des classifications LLM
+│   ├── llm_cache.json   # ✅ Cache persistant des classifications LLM
+│   └── logs/            # ✅ Logs rotatifs avec séparation système/décisions
+│       ├── pyantispam.log        # Tous les événements (debug complet)
+│       └── spam_decisions.log    # Décisions spam/ham uniquement
 ├── config.yaml          # ✅ Configuration principale
 └── .env                 # ✅ Clés API et mots de passe
 ```

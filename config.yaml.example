@@ -69,9 +69,21 @@ actions:
 email_connection:
   request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
 
-# Logging Settings
 logging:
-  log_decisions: true
-  log_file: "spam_decisions.log"
-  keep_logs_days: 90
-  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  level: "INFO"  # Niveau général : DEBUG, INFO, WARNING, ERROR
+
+# Logs système (tous les événements)
+  system:
+    enabled: true
+    file_path: "data/logs/pyantispam.log"
+    max_size_mb: 10        # Taille max par fichier en mb
+    backup_count: 5        # Nombre de fichiers à garder en jours
+    console_level: "INFO"  # Niveau pour la console
+    file_level: "DEBUG"    # Niveau pour le fichier
+
+  # Logs décisions spam
+  decisions:
+    enabled: true
+    file_path: "data/logs/spam_decisions.log"
+    max_size_mb: 20        # en mb
+    backup_count: 10       # en jours

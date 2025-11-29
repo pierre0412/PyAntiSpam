@@ -2,6 +2,7 @@
 
 import click
 import logging
+from logging.handlers import RotatingFileHandler
 import sys
 from pathlib import Path
 from typing import Optional
@@ -12,13 +13,76 @@ from .filters import ListManager
 from datetime import datetime
 
 
-def setup_logging(log_level: str = "INFO"):
-    """Setup logging configuration"""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+def spam_decision_filter(record):
+    """Filter to only allow spam decisions logs"""
+    return "Email decision:" in record.getMessage()
+
+def setup_logging(config_manager: ConfigManager, verbose: bool = False):
+    """Setup logging configuration with rotating file handlers"""
+
+    # Step 1: Read logging config
+    log_config = config_manager.get("logging", {})
+    system_config = log_config.get("system", {})
+    decisions_config = log_config.get("decisions", {})
+
+    # Step 2: Determine log levels
+    if verbose:
+        console_level = logging.DEBUG
+        file_level = logging.DEBUG
+    else:
+        console_level = getattr(logging, system_config.get("console_level", "INFO").upper())
+        file_level = getattr(logging, system_config.get("file_level", "INFO").upper())
+
+    # Step 3: Create log directory
+    system_file_path = system_config.get("file_path", "data/logs/pyantispam.log")
+    decisions_file_path = decisions_config.get("file_path", "data/logs/spam_decisions.log")
+    Path(system_file_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(decisions_file_path).parent.mkdir(parents=True, exist_ok=True)
+
+    # Step 4: Create formatter
+    simple_formatter = logging.Formatter(
+      '%(asctime)s - %(levelname)s - %(message)s',
+      datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+
+    # Step 5: Setup root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Capture everything, handlers will filter
+
+    # Step 6: Add console handler (StreamHandler)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(console_level)
+    console_handler.setFormatter(simple_formatter)
+    root_logger.addHandler(console_handler)
+
+    # Step 7: Add system file handler (RotatingFileHandler)
+    max_size = system_config.get('max_size_mb', 10) * 1024 * 1024
+    backup_count = system_config.get('backup_count', 5)
+    system_file_handler = RotatingFileHandler(
+        filename=system_file_path,
+        maxBytes=max_size,
+        backupCount=backup_count
+    )
+    system_file_handler.setLevel(file_level)
+    system_file_handler.setFormatter(detailed_formatter)
+    root_logger.addHandler(system_file_handler)
+
+    # Step 8: Add decisions file handler (RotatingFileHandler)
+    max_size = decisions_config.get('max_size_mb', 10) * 1024 * 1024
+    backup_count = decisions_config.get('backup_count', 5)
+    decisions_file_handler = RotatingFileHandler(
+        filename=decisions_file_path,
+        maxBytes=max_size,
+        backupCount=backup_count
+    )
+    decisions_file_handler.setLevel(file_level)
+    decisions_file_handler.setFormatter(simple_formatter)
+    decisions_file_handler.addFilter(spam_decision_filter)
+    root_logger.addHandler(decisions_file_handler)
 
 
 @click.group()
@@ -30,9 +94,11 @@ def main(ctx, config: str, verbose: bool):
     ctx.ensure_object(dict)
     ctx.obj['config'] = config
 
-    # Setup logging
-    log_level = "DEBUG" if verbose else "INFO"
-    setup_logging(log_level)
+    # Load configuration
+    config_manager = ConfigManager(config)
+
+    # Setup logging with configuration
+    setup_logging(config_manager, verbose)
 
     # Store config path in context
     ctx.obj['config_path'] = config
@@ -325,16 +391,6 @@ def blacklist_list(ctx):
 
     except Exception as e:
         click.echo(f"❌ Error: {e}")
-
-
-@main.command()
-@click.option('--days', default=7, help="Number of days to show")
-@click.pass_context
-def logs(ctx, days: int):
-    """Show recent spam detection logs"""
-    # TODO: Implement log viewing functionality
-    click.echo(f"📜 Showing logs for last {days} days")
-    click.echo("(Log viewing functionality not yet implemented)")
 
 
 @main.command()
