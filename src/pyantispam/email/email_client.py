@@ -12,7 +12,13 @@ import logging
 class EmailClient:
     """IMAP email client for spam detection operations"""
 
-    def __init__(self, server: str, port: int, username: str, password: str, use_ssl: bool = True, request_delay: float = 0.1):
+    def __init__(self, server: str,
+                 port: int,
+                 username: str,
+                 password: str,
+                 use_ssl: bool = True,
+                 request_delay: float = 0.1,
+                 timeout: int = 10):
         self.server = server
         self.port = port
         self.username = username
@@ -23,6 +29,7 @@ class EmailClient:
         self.logger = logging.getLogger(__name__)
         self.request_delay = request_delay  # Delay between requests in seconds
         self.last_request_time = 0
+        self.timeout = timeout
 
     def _throttle_request(self):
         """Enforce rate limiting by adding delays between requests"""
@@ -49,6 +56,9 @@ class EmailClient:
 
             self.imap.login(self.username, self.password)
             self.logger.info(f"Connected to {self.server} for {self.username}")
+            # Set socket timeout for all operations (including disconnect)
+            self.imap.sock.settimeout(self.timeout)
+
             return True
 
         except imaplib.IMAP4.error as e:
