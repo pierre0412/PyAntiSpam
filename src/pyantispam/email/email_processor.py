@@ -48,8 +48,10 @@ class EmailProcessor:
             self.account_configs[name] = account
 
             try:
-                # Get request delay from config (default 0.1 seconds)
-                request_delay = self.config.config.get('email_connection', {}).get('request_delay', 0.1)
+                # Get connection settings from config
+                email_connection = self.config.config.get('email_connection', {})
+                request_delay = email_connection.get('request_delay', 0.1)
+                timeout = email_connection.get('timeout', 10)
 
                 client = EmailClient(
                     server=account['server'],
@@ -57,7 +59,8 @@ class EmailProcessor:
                     username=account['username'],
                     password=account['password'],
                     use_ssl=account.get('use_ssl', True),
-                    request_delay=request_delay
+                    request_delay=request_delay,
+                    timeout=timeout
                 )
 
                 if client.connect():
@@ -504,16 +507,19 @@ class EmailProcessor:
         for account in accounts:
             name = account.get('name', 'unknown')
             try:
-                # Get request delay from config (default 0.1 seconds)
-                request_delay = self.config.config.get('email_connection', {}).get('request_delay', 0.1)
-                
+                # Get connection settings from config
+                email_connection = self.config.config.get('email_connection', {})
+                request_delay = email_connection.get('request_delay', 0.1)
+                timeout = email_connection.get('timeout', 10)
+
                 client = EmailClient(
                     server=account['server'],
                     port=account['port'],
                     username=account['username'],
                     password=account['password'],
                     use_ssl=account.get('use_ssl', True),
-                    request_delay=request_delay
+                    request_delay=request_delay,
+                    timeout=timeout
                 )
 
                 success = client.connect()

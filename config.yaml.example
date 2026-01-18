@@ -68,6 +68,7 @@ actions:
 # Email Connection Settings
 email_connection:
   request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
+  timeout: 10         # IMAP connection timeout in seconds
 
 logging:
   level: "INFO"  # Niveau général : DEBUG, INFO, WARNING, ERROR

@@ -100,6 +100,11 @@ llm:
 actions:
   move_spam_to_folder: "SPAM_AUTO"  # Dossier de destination
   auto_delete_after_days: 10        # Suppression auto des spams après X jours (0 = jamais)
+
+# Connexion IMAP
+email_connection:
+  request_delay: 0.1  # Délai entre requêtes IMAP en secondes (évite surcharge serveur)
+  timeout: 10         # Timeout connexion IMAP en secondes
 ```
 
 ### 3. Variables d'environnement (`.env`)

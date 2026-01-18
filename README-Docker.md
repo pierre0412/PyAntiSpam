@@ -175,8 +175,9 @@ tar czf backup-$(date +%F).tar.gz data config.yaml
 - Le conteneur s’arrête immédiatement:
   - Vérifiez la validité de `config.yaml` et la présence des variables `.env` requises.
   - Consulter `docker compose logs` pour l’erreur détaillée.
-- Erreurs d’IMAP (SSL, déconnexion):
+- Erreurs d'IMAP (SSL, déconnexion, timeout):
   - Ajustez `email_connection.request_delay` dans `config.yaml` (ex: 0.1 s) pour réduire la charge.
+  - Augmentez `email_connection.timeout` (ex: 30 s) pour les serveurs lents.
   - Vérifiez les ports/SSL de vos serveurs IMAP.
 - LLM indisponible / temps de réponse long:
   - Activez le cache (`llm.cache.enabled: true`) et assurez un volume persistant sur `data/`.

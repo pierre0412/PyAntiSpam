@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 src/pyantispam/__init__.py
@@ -15,3 +16,12 @@ src/pyantispam/email/email_client.py
 src/pyantispam/email/email_processor.py
 src/pyantispam/filters/__init__.py
 src/pyantispam/filters/list_manager.py
+src/pyantispam/learning/__init__.py
+src/pyantispam/learning/feedback_processor.py
+src/pyantispam/llm/__init__.py
+src/pyantispam/llm/llm_classifier.py
+src/pyantispam/ml/__init__.py
+src/pyantispam/ml/feature_extractor.py
+src/pyantispam/ml/ml_classifier.py
+src/pyantispam/stats/__init__.py
+src/pyantispam/stats/stats_manager.py
