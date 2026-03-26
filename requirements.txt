@@ -14,7 +14,7 @@ httpcore==1.0.9
 httpx==0.28.1
 idna==3.11
 imaplib2==3.6
-importlib_metadata==9.0.0
+importlib_metadata
 jiter==0.13.0
 joblib==1.5.3
 jsonpath-python==1.1.5
