@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from typing import Dict, Any, Optional, TYPE_CHECKING
 import json
 
@@ -110,6 +111,24 @@ class LLMClassifier:
             "method": "llm_error"
         }
 
+    @staticmethod
+    def _strip_code_fences(text: str) -> str:
+        """Remove ```json ... ``` / ``` ... ``` fences some LLMs add despite instructions not to."""
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+            text = re.sub(r"```$", "", text).strip()
+        return text
+
+    @staticmethod
+    def _fallback_is_spam(result_text: str) -> bool:
+        """Best-effort spam guess when JSON parsing fails. Must match the is_spam VALUE,
+        not just the field name (naive 'spam' in text matches the literal key "is_spam")."""
+        match = re.search(r'"is_spam"\s*:\s*(true|false)', result_text, re.IGNORECASE)
+        if match:
+            return match.group(1).lower() == "true"
+        return "spam" in result_text.lower()
+
     def _prepare_email_text(self, email_data: Dict[str, Any]) -> str:
         """Prepare email text for LLM analysis"""
         parts = []
@@ -193,7 +212,7 @@ class LLMClassifier:
             model = self.config.get("llm.model", "gpt-4.1-nano")
 
             system_prompt = (
-                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text or markdown.\n"
+                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text, no markdown, no code fences (do not wrap the JSON in ```).\n"
                 "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
                 "SPAM INDICATORS (be aggressive on detection):\n"
                 "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
@@ -227,14 +246,15 @@ class LLMClassifier:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                response_format={"type": "json_object"},
                 #max_completion_tokens=200
             )
 
             result_text = response.choices[0].message.content.strip()
 
-            # Try to parse JSON response
+            # Try to parse JSON response (stripping markdown fences some models add despite instructions)
             try:
-                result = json.loads(result_text)
+                result = json.loads(self._strip_code_fences(result_text))
                 is_spam = result.get("is_spam", False)
                 confidence = max(0.0, min(1.0, result.get("confidence", 0.5)))
                 reason = result.get("reason", "LLM analysis")
@@ -248,7 +268,7 @@ class LLMClassifier:
 
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
-                is_spam = "spam" in result_text.lower() or "yes" in result_text.lower()
+                is_spam = self._fallback_is_spam(result_text)
                 return {
                     "action": "SPAM" if is_spam else "KEEP",
                     "reason": f"OpenAI: {result_text[:100]}",
@@ -275,7 +295,7 @@ class LLMClassifier:
 Email to analyze:
 {email_text}
 
-Respond with JSON in this exact format:
+Respond with JSON only, no extra text, no markdown, no code fences (do not wrap the JSON in ```), in this exact format:
 {{
     "is_spam": true/false,
     "confidence": 0.0-1.0,
@@ -340,9 +360,9 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
 
             result_text = response.content[0].text.strip()
 
-            # Try to parse JSON response
+            # Try to parse JSON response (stripping markdown fences some models add despite instructions)
             try:
-                result = json.loads(result_text)
+                result = json.loads(self._strip_code_fences(result_text))
                 is_spam = result.get("is_spam", False)
                 confidence = max(0.0, min(1.0, result.get("confidence", 0.5)))
                 reason = result.get("reason", "LLM analysis")
@@ -356,7 +376,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
 
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
-                is_spam = "spam" in result_text.lower() or "true" in result_text.lower()
+                is_spam = self._fallback_is_spam(result_text)
                 return {
                     "action": "SPAM" if is_spam else "KEEP",
                     "reason": f"Claude: {result_text[:100]}",
@@ -379,7 +399,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
             model = self.config.get("llm.model", "mistral-medium-latest")
 
             system_prompt = (
-                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text or markdown.\n"
+                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text, no markdown, no code fences (do not wrap the JSON in ```).\n"
                 "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
                 "SPAM INDICATORS (be aggressive on detection):\n"
                 "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
@@ -413,6 +433,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
+                response_format={"type": "json_object"},
                 stream=False,
                 temperature=0.1,
                 max_tokens=200
@@ -420,9 +441,9 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
 
             result_text = response.choices[0].message.content.strip()
 
-            # Try to parse JSON response
+            # Try to parse JSON response (stripping markdown fences some models add despite instructions)
             try:
-                result = json.loads(result_text)
+                result = json.loads(self._strip_code_fences(result_text))
                 is_spam = result.get("is_spam", False)
                 confidence = max(0.0, min(1.0, result.get("confidence", 0.5)))
                 reason = result.get("reason", "LLM analysis")
@@ -436,7 +457,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
 
             except json.JSONDecodeError:
                 # Fallback if JSON parsing fails
-                is_spam = "spam" in result_text.lower() or "yes" in result_text.lower()
+                is_spam = self._fallback_is_spam(result_text)
                 return {
                     "action": "SPAM" if is_spam else "KEEP",
                     "reason": f"MistralAI: {result_text[:100]}",
