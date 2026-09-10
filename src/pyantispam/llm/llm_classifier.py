@@ -20,7 +20,7 @@ except ImportError:
     anthropic = None
 
 try:
-    from mistralai import Mistral
+    from mistralai.client import Mistral
 except ImportError:
     Mistral = None
 
