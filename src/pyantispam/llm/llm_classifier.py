@@ -436,7 +436,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 response_format={"type": "json_object"},
                 stream=False,
                 temperature=0.1,
-                max_tokens=200
+                max_tokens=400
             )
 
             result_text = response.choices[0].message.content.strip()
