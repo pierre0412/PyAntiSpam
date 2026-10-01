@@ -463,10 +463,38 @@ class MLClassifier:
             self.logger.warning(f"Error loading model: {e}")
 
     def _save_training_data(self, samples: List[Dict[str, Any]]):
-        """Save training data for future reference"""
+        """Persist training data, merging with what's already on disk.
+
+        train_with_samples() is sometimes called with only the current batch
+        (e.g. the daemon's auto-retrain, which starts from an empty list on
+        every restart). Overwriting the file here used to wipe out real
+        feedback accumulated in previous runs.
+        """
         try:
-            with open(self.training_data_file, 'w') as f:
-                json.dump(samples, f, indent=2)
+            existing: List[Dict[str, Any]] = []
+            if self.training_data_file.exists():
+                try:
+                    with open(self.training_data_file, 'r', encoding='utf-8') as f:
+                        existing = json.load(f)
+                    if not isinstance(existing, list):
+                        existing = []
+                except (json.JSONDecodeError, OSError) as e:
+                    self.logger.warning(f"Could not read existing training data, starting fresh: {e}")
+                    existing = []
+
+            seen = set()
+            merged: List[Dict[str, Any]] = []
+            for sample in existing + samples:
+                email_data = sample.get('email_data', {})
+                content = str(email_data.get('body', email_data.get('text_content', '')))[:200]
+                fingerprint = f"{email_data.get('sender_email', '')}|{email_data.get('subject', '')}|{content}"
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+                merged.append(sample)
+
+            with open(self.training_data_file, 'w', encoding='utf-8') as f:
+                json.dump(merged, f, indent=2, ensure_ascii=False)
         except Exception as e:
             self.logger.error(f"Error saving training data: {e}")
 
