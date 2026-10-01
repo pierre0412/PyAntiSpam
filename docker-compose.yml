@@ -54,6 +54,66 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # --- Étape 1 de la feuille de route rspamd : stack autonome, pas encore
+  # branchée au pipeline Python. On l'utilise pour l'instant en analysant des
+  # .eml à la main via /checkv2 (voir samples/).
+
+  redis:
+    image: redis:8.4-alpine
+    container_name: pyantispam-redis
+    restart: unless-stopped
+    # noeviction : en cas de saturation mémoire, redis refuse les nouvelles
+    # écritures plutôt que de jeter silencieusement des données bayes/fuzzy.
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy noeviction
+    volumes:
+      - redis-data:/data
+    networks:
+      - pyantispam-net
+    deploy:
+      resources:
+        limits:
+          memory: 160M
+          cpus: '0.25'
+
+  unbound:
+    image: klutchell/unbound:latest
+    container_name: pyantispam-unbound
+    restart: unless-stopped
+    volumes:
+      - ./docker/unbound/custom.conf.d:/etc/unbound/custom.conf.d:ro
+    networks:
+      - pyantispam-net
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.25'
+
+  rspamd:
+    image: rspamd/rspamd:4.2.1
+    container_name: rspamd
+    restart: unless-stopped
+    depends_on:
+      - redis
+      - unbound
+    # WebUI/controller exposé sur le réseau local, protégé par mot de passe
+    # (voir docker/rspamd/local.d/worker-controller.inc).
+    ports:
+      - "11334:11334"
+    volumes:
+      - ./docker/rspamd/local.d:/etc/rspamd/local.d:ro
+      - rspamd-data:/var/lib/rspamd
+    networks:
+      - pyantispam-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+          cpus: '0.25'
+
 networks:
   pyantispam-net:
     driver: bridge
@@ -62,4 +122,8 @@ networks:
 volumes:
   # Volume nommé optionnel pour backup
   pyantispam-backup:
+    driver: local
+  redis-data:
+    driver: local
+  rspamd-data:
     driver: local

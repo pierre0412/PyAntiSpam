@@ -1,0 +1,17 @@
+# WebUI/controller accessible sur le réseau local (port 11334 publié dans
+# docker-compose.yml), protégé par mot de passe.
+#
+# Ce fichier .example est versionné dans git. Le fichier réel
+# (worker-controller.inc, sans suffixe) est gitignoré — même convention que
+# config.yaml/.env dans ce projet : le hash, même bcrypt, n'a rien à faire
+# dans l'historique git.
+#
+# Mise en place (après le premier `docker compose up -d rspamd`) :
+#   cp docker/rspamd/local.d/worker-controller.inc.example \
+#      docker/rspamd/local.d/worker-controller.inc
+#   docker compose exec rspamd rspamadm pw
+# -> colle le résultat dans worker-controller.inc à la place du placeholder,
+#    puis :
+#   docker compose restart rspamd
+
+password = "$2$CHANGE_ME_run_rspamadm_pw";
