@@ -186,6 +186,11 @@ class EmailProcessor:
                     # Log the decision
                     self._log_decision(email_data, decision)
 
+                    # Structured record for future calibration analysis (precision at
+                    # confidence threshold, not just raw accuracy). Pure observation of
+                    # a decision already made and already applied — never touches mail.
+                    self._log_prediction_record(email_data, decision, email_fingerprint)
+
                     results["details"].append({
                         "email_id": email_id,
                         "subject": email_data.get("subject", "")[:50],
@@ -494,6 +499,36 @@ class EmailProcessor:
             f"Subject: {email_data.get('subject', '')[:30]}... | "
             f"Reason: {decision['reason']}"
         )
+
+    def _log_prediction_record(self, email_data: Dict[str, Any], decision: Dict[str, Any], email_fingerprint: str):
+        """Append a structured prediction record for future calibration analysis.
+
+        Separate from _log_decision (human-readable log): this is JSONL, one line
+        per email, meant to be joined later against real feedback (blacklist/
+        whitelist/is_spam/not_spam) to measure precision at confidence threshold,
+        not just raw accuracy. Append-only by design - never read-modify-write
+        the whole file.
+        """
+        try:
+            log_path = Path("data/logs/prediction_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            record = {
+                "timestamp": time.time(),
+                "fingerprint": email_fingerprint,
+                "account": email_data.get("account_name", "unknown"),
+                "sender_email": email_data.get("sender_email", ""),
+                "sender_domain": email_data.get("sender_domain", ""),
+                "subject": email_data.get("subject", "")[:100],
+                "action": decision.get("action"),
+                "confidence": decision.get("confidence"),
+                "method": decision.get("method"),
+            }
+
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            self.logger.warning(f"Could not write prediction record (non-blocking): {e}")
 
     def get_account_names(self) -> List[str]:
         """Get list of configured account names"""
