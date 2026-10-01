@@ -31,6 +31,18 @@ EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 MAX_BODY_CHARS = 2000  # ~512 tokens, cf. doc projet
 N_SPLITS = 5
 
+# Features dérivées de l'historique de feedback du même expéditeur : l'auto-blacklist
+# s'en charge déjà, et elles sont partiellement circulaires avec le label pour un
+# expéditeur déjà signalé plusieurs fois. On les exclut pour juger le contenu seul,
+# qui est le seul signal utile face à un expéditeur jamais vu.
+SENDER_HISTORY_FEATURES = {
+    "sender_spam_ratio",
+    "sender_total_feedbacks",
+    "sender_days_since_first",
+    "sender_is_recurring_spammer",
+    "sender_is_recurring_ham",
+}
+
 
 def decode_mime_subject(raw_subject: str) -> str:
     try:
@@ -71,9 +83,13 @@ def build_embedding_text(email_data: Dict[str, Any]) -> str:
     return f"{subject}\n\n{body[:MAX_BODY_CHARS]}"
 
 
-def evaluate_rf(samples: List[Dict[str, Any]], y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
+def evaluate_rf(
+    samples: List[Dict[str, Any]], y: np.ndarray, cv: StratifiedKFold, content_only: bool = False
+) -> Dict[str, float]:
     extractor = FeatureExtractor()
     feature_names = extractor.get_feature_names()
+    if content_only:
+        feature_names = [n for n in feature_names if n not in SENDER_HISTORY_FEATURES]
 
     X = []
     for s in samples:
@@ -132,13 +148,19 @@ def main():
 
     cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-    rf_scores = evaluate_rf(samples, y, cv)
+    rf_full_scores = evaluate_rf(samples, y, cv, content_only=False)
+    rf_content_scores = evaluate_rf(samples, y, cv, content_only=True)
     emb_scores = evaluate_embeddings(texts, y, cv)
 
     print("\n=== Résultats (moyenne sur 5 folds) ===")
-    print(f"{'Métrique':<18}{'RF (features actuelles)':<26}{'Embeddings + LogReg':<22}")
+    print("RF 'complet' inclut sender_spam_ratio et consorts : déjà couvert par l'auto-blacklist,")
+    print("comparer sur le contenu seul (RF content-only vs embeddings) est la question pertinente.\n")
+    print(f"{'Métrique':<18}{'RF complet':<14}{'RF contenu seul':<18}{'Embeddings+LogReg':<18}")
     for metric in ["accuracy", "precision_macro", "recall_macro", "f1_macro"]:
-        print(f"{metric:<18}{rf_scores[metric]:<26.3f}{emb_scores[metric]:<22.3f}")
+        print(
+            f"{metric:<18}{rf_full_scores[metric]:<14.3f}"
+            f"{rf_content_scores[metric]:<18.3f}{emb_scores[metric]:<18.3f}"
+        )
 
 
 if __name__ == "__main__":
