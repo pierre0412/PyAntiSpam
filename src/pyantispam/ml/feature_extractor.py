@@ -207,6 +207,8 @@ class FeatureExtractor:
                 'replyto_from_mismatch': 0.0,
                 'message_id_domain_match': 0.0,
                 'received_hops': 0.0,
+                'x_spam_score': 0.0,
+                'x_spam_bypassed': 0.0,
             }
 
         # Normalize helper
@@ -251,6 +253,27 @@ class FeatureExtractor:
         else:
             hops = 0
         features['received_hops'] = float(hops)
+
+        # SpamAssassin/Amavis score, quand l'hébergeur le fournit (pas universel -
+        # 0.0 par défaut si absent, cf. pilote embeddings du 2026-10-02 : AUC 0.856
+        # sur ce seul signal, mais présent sur une partie seulement des comptes).
+        # Certaines valeurs sont des sentinelles ("expéditeur déjà whitelisté côté
+        # hébergeur", ex: -995, -997, -999) plutôt qu'un vrai score de contenu -
+        # on les isole dans un flag séparé plutôt que de les prendre au pied de
+        # la lettre comme un signal "très sain".
+        spam_status = hget('X-Spam-Status')
+        m_score = re.search(r'score=(-?[\d.]+)', spam_status)
+        if m_score:
+            raw_score = float(m_score.group(1))
+            if raw_score < -100:
+                features['x_spam_score'] = 0.0
+                features['x_spam_bypassed'] = 1.0
+            else:
+                features['x_spam_score'] = raw_score
+                features['x_spam_bypassed'] = 0.0
+        else:
+            features['x_spam_score'] = 0.0
+            features['x_spam_bypassed'] = 0.0
 
         return features
 
@@ -586,7 +609,8 @@ class FeatureExtractor:
         feature_names.extend([
             'auth_spf_pass', 'auth_dkim_pass', 'auth_dmarc_pass',
             'from_dkim_domain_match', 'has_list_unsubscribe',
-            'replyto_from_mismatch', 'message_id_domain_match', 'received_hops'
+            'replyto_from_mismatch', 'message_id_domain_match', 'received_hops',
+            'x_spam_score', 'x_spam_bypassed'
         ])
 
         # Newsletter-specific features
