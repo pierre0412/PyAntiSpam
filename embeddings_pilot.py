@@ -28,7 +28,7 @@ from sklearn.ensemble import RandomForestClassifier  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
 from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support, roc_auc_score  # noqa: E402
 from sklearn.metrics.pairwise import cosine_similarity  # noqa: E402
-from sklearn.model_selection import StratifiedKFold  # noqa: E402
+from sklearn.model_selection import StratifiedGroupKFold  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -88,7 +88,11 @@ def build_embedding_text(email_data: Dict[str, Any]) -> str:
 
 
 def evaluate_rf(
-    samples: List[Dict[str, Any]], y: np.ndarray, cv: StratifiedKFold, content_only: bool = False
+    samples: List[Dict[str, Any]],
+    y: np.ndarray,
+    groups: np.ndarray,
+    cv: StratifiedGroupKFold,
+    content_only: bool = False,
 ) -> Dict[str, float]:
     extractor = FeatureExtractor()
     feature_names = extractor.get_feature_names()
@@ -102,7 +106,7 @@ def evaluate_rf(
     X = np.array(X)
 
     pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
-    for train_idx, test_idx in cv.split(X, y):
+    for train_idx, test_idx in cv.split(X, y, groups):
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X[train_idx])
         X_test = scaler.transform(X[test_idx])
@@ -120,9 +124,11 @@ def compute_embeddings(texts: List[str]) -> np.ndarray:
     return model.encode(texts, show_progress_bar=False)
 
 
-def evaluate_embeddings_logreg(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
+def evaluate_embeddings_logreg(
+    X: np.ndarray, y: np.ndarray, groups: np.ndarray, cv: StratifiedGroupKFold
+) -> Dict[str, float]:
     pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
-    for train_idx, test_idx in cv.split(X, y):
+    for train_idx, test_idx in cv.split(X, y, groups):
         clf = LogisticRegression(class_weight="balanced", max_iter=1000)
         clf.fit(X[train_idx], y[train_idx])
         _score_fold(clf.predict(X[test_idx]), y[test_idx], pipeline_scores)
@@ -130,7 +136,9 @@ def evaluate_embeddings_logreg(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold
     return {k: float(np.mean(v)) for k, v in pipeline_scores.items()}
 
 
-def evaluate_semantic_fuzzy(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
+def evaluate_semantic_fuzzy(
+    X: np.ndarray, y: np.ndarray, groups: np.ndarray, cv: StratifiedGroupKFold
+) -> Dict[str, float]:
     """"Fuzzy sémantique" de la note projet : pas d'entraînement supervisé, juste
 
     la similarité cosinus max de chaque mail avec les spams déjà connus. Le
@@ -140,7 +148,7 @@ def evaluate_semantic_fuzzy(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold) -
     pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
     oof_scores, oof_labels = [], []  # out-of-fold, pour un AUC global indépendant du seuil
 
-    for train_idx, test_idx in cv.split(X, y):
+    for train_idx, test_idx in cv.split(X, y, groups):
         spam_train_idx = train_idx[y[train_idx] == 1]
         sim_train = cosine_similarity(X[train_idx], X[spam_train_idx])
         # Un spam du train ne doit pas se comparer à lui-même (similarité triviale = 1)
@@ -184,23 +192,29 @@ def main():
     samples = load_real_samples()
     y = np.array([1 if s["is_spam"] else 0 for s in samples])
     texts = [build_embedding_text(s["email_data"]) for s in samples]
+    # Groupe par domaine expéditeur : un même domaine ne doit jamais se retrouver
+    # à la fois dans le train et le test d'un même fold, sinon on ne mesure pas
+    # vraiment la capacité à juger un expéditeur jamais vu (31% des 74 échantillons
+    # partagent un domaine avec au moins un autre échantillon).
+    groups = np.array([s["email_data"].get("sender_domain", f"__no_domain_{i}") for i, s in enumerate(samples)])
 
     print(f"Échantillons réels utilisables : {len(samples)} (spam={int(y.sum())}, ham={int((1 - y).sum())})")
+    print(f"Domaines expéditeurs distincts : {len(set(groups))}")
     if len(samples) < 20:
         print("Attention : échantillon très réduit, résultats indicatifs uniquement.\n")
 
-    cv = StratifiedKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
+    cv = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=42)
 
-    rf_full_scores = evaluate_rf(samples, y, cv, content_only=False)
-    rf_content_scores = evaluate_rf(samples, y, cv, content_only=True)
+    rf_full_scores = evaluate_rf(samples, y, groups, cv, content_only=False)
+    rf_content_scores = evaluate_rf(samples, y, groups, cv, content_only=True)
 
     X_emb = compute_embeddings(texts)
-    emb_scores = evaluate_embeddings_logreg(X_emb, y, cv)
-    fuzzy_scores = evaluate_semantic_fuzzy(X_emb, y, cv)
+    emb_scores = evaluate_embeddings_logreg(X_emb, y, groups, cv)
+    fuzzy_scores = evaluate_semantic_fuzzy(X_emb, y, groups, cv)
 
-    print("\n=== Résultats (moyenne sur 5 folds) ===")
-    print("RF 'complet' inclut sender_spam_ratio et consorts : déjà couvert par l'auto-blacklist,")
-    print("comparer sur le contenu seul (RF content-only vs embeddings/fuzzy) est la question pertinente.\n")
+    print("\n=== Résultats (moyenne sur 5 folds, groupés par domaine expéditeur) ===")
+    print("Un domaine expéditeur n'apparaît jamais à la fois en train et en test :")
+    print("ça mesure la capacité à juger un expéditeur jamais vu, pas à le reconnaître.\n")
     print(f"{'Métrique':<18}{'RF complet':<14}{'RF contenu seul':<18}{'Embeddings+LogReg':<20}{'Fuzzy sémantique':<18}")
     for metric in ["accuracy", "precision_macro", "recall_macro", "f1_macro"]:
         print(
