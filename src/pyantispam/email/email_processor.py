@@ -500,6 +500,36 @@ class EmailProcessor:
             f"Reason: {decision['reason']}"
         )
 
+    def _already_logged(self, fingerprint: str, action: str, method: str) -> bool:
+        """Check (and update) the small fingerprint->last-decision index.
+
+        EmailProcessor is recreated every daemon cycle (see cli.py daemon loop),
+        so an in-memory dedup set wouldn't survive between cycles - a still-unread
+        email gets fully reprocessed every cycle by design. Without this, the
+        prediction log fills with thousands of identical repeats of the same
+        handful of unread emails instead of real signal. We persist the small
+        index (one entry per email ever seen, not per cycle) instead.
+        """
+        index_path = Path("data/logs/prediction_log_seen.json")
+        try:
+            seen: Dict[str, List[str]] = {}
+            if index_path.exists():
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    seen = json.load(f)
+
+            current = [action, method]
+            if seen.get(fingerprint) == current:
+                return True
+
+            seen[fingerprint] = current
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(seen, f, ensure_ascii=False)
+            return False
+        except Exception as e:
+            self.logger.warning(f"Could not check prediction dedup index (logging anyway): {e}")
+            return False
+
     def _log_prediction_record(self, email_data: Dict[str, Any], decision: Dict[str, Any], email_fingerprint: str):
         """Append a structured prediction record for future calibration analysis.
 
@@ -507,9 +537,16 @@ class EmailProcessor:
         per email, meant to be joined later against real feedback (blacklist/
         whitelist/is_spam/not_spam) to measure precision at confidence threshold,
         not just raw accuracy. Append-only by design - never read-modify-write
-        the whole file.
+        the whole file. Skips writing when the exact same decision for this email
+        was already logged (see _already_logged) - only new or changed verdicts
+        are worth keeping for calibration analysis.
         """
         try:
+            action = decision.get("action")
+            method = decision.get("method")
+            if self._already_logged(email_fingerprint, action, method):
+                return
+
             log_path = Path("data/logs/prediction_log.jsonl")
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -520,9 +557,9 @@ class EmailProcessor:
                 "sender_email": email_data.get("sender_email", ""),
                 "sender_domain": email_data.get("sender_domain", ""),
                 "subject": email_data.get("subject", "")[:100],
-                "action": decision.get("action"),
+                "action": action,
                 "confidence": decision.get("confidence"),
-                "method": decision.get("method"),
+                "method": method,
             }
 
             with open(log_path, 'a', encoding='utf-8') as f:
