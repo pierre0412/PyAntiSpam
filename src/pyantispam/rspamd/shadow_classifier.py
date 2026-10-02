@@ -72,3 +72,30 @@ class RspamdShadowClassifier:
         except Exception as e:
             self.logger.debug(f"rspamd shadow check failed (non-blocking): {e}")
             return None
+
+    def learn_spam(self, raw_message: bytes) -> bool:
+        """Teach rspamd this message is spam. Only call this from real human
+        feedback (blacklist/is_spam folders) - never from an ML/LLM verdict,
+        which isn't independently verified. Best-effort: returns False on any
+        failure (down, timeout, already learned), never raises.
+        """
+        return self._learn(raw_message, "learnspam")
+
+    def learn_ham(self, raw_message: bytes) -> bool:
+        """Teach rspamd this message is ham. Same caveats as learn_spam."""
+        return self._learn(raw_message, "learnham")
+
+    def _learn(self, raw_message: bytes, endpoint: str) -> bool:
+        if not self.enabled or not raw_message:
+            return False
+        try:
+            response = requests.post(
+                f"{self.url}/{endpoint}",
+                headers={"Password": self.password},
+                data=raw_message,
+                timeout=self.timeout,
+            )
+            return response.ok
+        except Exception as e:
+            self.logger.debug(f"rspamd {endpoint} failed (non-blocking): {e}")
+            return False

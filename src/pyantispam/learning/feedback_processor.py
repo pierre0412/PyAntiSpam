@@ -8,6 +8,7 @@ from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
+from ..rspamd import RspamdShadowClassifier
 from ..stats.stats_manager import StatsManager
 
 if TYPE_CHECKING:
@@ -32,6 +33,7 @@ class FeedbackProcessor:
         # Components
         self.list_manager = ListManager()
         self.ml_classifier = MLClassifier(config)
+        self.rspamd_shadow = RspamdShadowClassifier(config)
         self.stats_manager = StatsManager()
 
         # Training samples for ML retraining
@@ -185,9 +187,16 @@ class FeedbackProcessor:
                         results["errors"] += 1
                         continue
 
+                    # Fetch raw bytes now (before any move/expunge below invalidates
+                    # this email_id) if rspamd needs to learn from it. Only pays
+                    # this extra IMAP round-trip when rspamd integration is on.
+                    raw_message = (
+                        client.fetch_raw_message(email_id) if self.rspamd_shadow.is_enabled() else None
+                    )
+
                     # Process feedback based on folder type
                     feedback_result = self._process_single_feedback(
-                        email_data, feedback_type, client, email_id, account_config
+                        email_data, feedback_type, client, email_id, account_config, raw_message
                     )
 
                     if feedback_result["success"]:
@@ -224,7 +233,8 @@ class FeedbackProcessor:
         return results
 
     def _process_single_feedback(self, email_data: Dict[str, Any], feedback_type: str,
-                               client: EmailClient, email_id: str, account_config: dict[str, Any]) -> Dict[str, Any]:
+                               client: EmailClient, email_id: str, account_config: dict[str, Any],
+                               raw_message: Optional[bytes] = None) -> Dict[str, Any]:
         """Process a single feedback email"""
         sender_email = email_data.get("sender_email", "")
         sender_domain = email_data.get("sender_domain", "")
@@ -353,6 +363,21 @@ class FeedbackProcessor:
                         self.list_manager.add_to_blacklist(sender_email, "email")
                         result["item_added"] += f" + AUTO_BLACKLIST:email:{sender_email}"
                         self.logger.warning(f"🚫 AUTO-BLACKLIST: Added {sender_email} (reason: {auto_action['reason']})")
+
+            # Teach rspamd from this confirmed human feedback (never from an ML/LLM
+            # verdict - only real human-filed feedback is trustworthy enough for
+            # this). Best-effort, before the move below invalidates email_id.
+            # Double-guarded on purpose: learn_spam/learn_ham already swallow their
+            # own errors, but a failure here must never be able to block the real
+            # feedback action (list update + move) that follows.
+            try:
+                if raw_message:
+                    if feedback_type in ("blacklist", "is_spam"):
+                        self.rspamd_shadow.learn_spam(raw_message)
+                    elif feedback_type in ("whitelist", "not_spam"):
+                        self.rspamd_shadow.learn_ham(raw_message)
+            except Exception as e:
+                self.logger.warning(f"rspamd learn call failed (non-blocking): {e}")
 
             # Route email to appropriate destination based on feedback type
             destination_folder = self._get_destination_folder(feedback_type, account_config)
