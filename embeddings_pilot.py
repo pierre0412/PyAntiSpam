@@ -105,7 +105,7 @@ def evaluate_rf(
         X.append([features.get(name, 0.0) for name in feature_names])
     X = np.array(X)
 
-    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
+    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": [], "recall_spam": [], "precision_spam": [], "recall_ham": []}
     for train_idx, test_idx in cv.split(X, y, groups):
         scaler = StandardScaler()
         X_train = scaler.fit_transform(X[train_idx])
@@ -127,7 +127,7 @@ def compute_embeddings(texts: List[str]) -> np.ndarray:
 def evaluate_embeddings_logreg(
     X: np.ndarray, y: np.ndarray, groups: np.ndarray, cv: StratifiedGroupKFold
 ) -> Dict[str, float]:
-    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
+    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": [], "recall_spam": [], "precision_spam": [], "recall_ham": []}
     for train_idx, test_idx in cv.split(X, y, groups):
         clf = LogisticRegression(class_weight="balanced", max_iter=1000)
         clf.fit(X[train_idx], y[train_idx])
@@ -145,7 +145,7 @@ def evaluate_semantic_fuzzy(
     seuil de décision est choisi sur le fold d'entraînement (celui qui maximise
     le F1), jamais sur le test, pour ne pas tricher.
     """
-    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
+    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": [], "recall_spam": [], "precision_spam": [], "recall_ham": []}
     oof_scores, oof_labels = [], []  # out-of-fold, pour un AUC global indépendant du seuil
 
     for train_idx, test_idx in cv.split(X, y, groups):
@@ -182,10 +182,19 @@ def _score_fold(y_pred, y_test, pipeline_scores: Dict[str, list]):
     precision, recall, f1, _ = precision_recall_fscore_support(
         y_test, y_pred, average="macro", zero_division=0
     )
+    # Par classe aussi : c'est le taux de détection du spam (recall_spam) et le taux
+    # de faux positifs sur le ham (1 - recall_ham) qui comptent le plus en pratique,
+    # pas la moyenne macro qui les dilue.
+    precision_per_class, recall_per_class, _, _ = precision_recall_fscore_support(
+        y_test, y_pred, labels=[0, 1], zero_division=0
+    )
     pipeline_scores["accuracy"].append(accuracy_score(y_test, y_pred))
     pipeline_scores["precision_macro"].append(precision)
     pipeline_scores["recall_macro"].append(recall)
     pipeline_scores["f1_macro"].append(f1)
+    pipeline_scores["recall_spam"].append(recall_per_class[1])
+    pipeline_scores["precision_spam"].append(precision_per_class[1])
+    pipeline_scores["recall_ham"].append(recall_per_class[0])
 
 
 def main():
@@ -216,7 +225,10 @@ def main():
     print("Un domaine expéditeur n'apparaît jamais à la fois en train et en test :")
     print("ça mesure la capacité à juger un expéditeur jamais vu, pas à le reconnaître.\n")
     print(f"{'Métrique':<18}{'RF complet':<14}{'RF contenu seul':<18}{'Embeddings+LogReg':<20}{'Fuzzy sémantique':<18}")
-    for metric in ["accuracy", "precision_macro", "recall_macro", "f1_macro"]:
+    for metric in [
+        "accuracy", "precision_macro", "recall_macro", "f1_macro",
+        "recall_spam", "precision_spam", "recall_ham",
+    ]:
         print(
             f"{metric:<18}{rf_full_scores[metric]:<14.3f}"
             f"{rf_content_scores[metric]:<18.3f}{emb_scores[metric]:<20.3f}{fuzzy_scores[metric]:<18.3f}"
