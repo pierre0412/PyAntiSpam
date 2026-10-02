@@ -462,6 +462,15 @@ class MLClassifier:
         except Exception as e:
             self.logger.warning(f"Error loading model: {e}")
 
+    def persist_sample(self, sample: Dict[str, Any]):
+        """Persist a single confirmed training sample immediately (merged, deduped).
+
+        Used for labels we already know with certainty outside of a full
+        retrain - e.g. a whitelist/blacklist hit - without waiting for a
+        batch to accumulate.
+        """
+        self._save_training_data([sample])
+
     def _save_training_data(self, samples: List[Dict[str, Any]]):
         """Persist training data, merging with what's already on disk.
 

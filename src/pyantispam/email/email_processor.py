@@ -332,6 +332,7 @@ class EmailProcessor:
         # Step 1: Check whitelist/blacklist (highest priority)
         whitelist_result = self._check_whitelist(sender_email, sender_domain)
         if whitelist_result:
+            self._collect_confirmed_training_sample(email_data, is_spam=False)
             return {
                 "action": "KEEP",
                 "reason": f"WHITELIST: {whitelist_result}",
@@ -341,6 +342,7 @@ class EmailProcessor:
 
         blacklist_result = self._check_blacklist(sender_email, sender_domain)
         if blacklist_result:
+            self._collect_confirmed_training_sample(email_data, is_spam=True)
             return {
                 "action": "SPAM",
                 "reason": f"BLACKLIST: {blacklist_result}",
@@ -418,6 +420,24 @@ class EmailProcessor:
         # Use sender, subject, and first 200 chars of body to create fingerprint
         content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
         return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _collect_confirmed_training_sample(self, email_data: Dict[str, Any], is_spam: bool):
+        """Persist a training sample for a whitelist/blacklist hit.
+
+        These short-circuit before ML/LLM ever run (see _process_single_email),
+        so without this, a sender that gets auto-blacklisted stops contributing
+        any training signal at all - exactly the recurring campaigns the content
+        classifier would benefit most from learning. Label is already known with
+        certainty (3+ prior feedbacks), so no LLM call needed. Persisted
+        immediately (not batched) so it survives even if the daemon never
+        accumulates enough for a full retrain this cycle. Never affects the
+        decision already returned to the caller.
+        """
+        try:
+            sample = {"email_data": email_data.copy(), "is_spam": is_spam}
+            self.ml_classifier.persist_sample(sample)
+        except Exception as e:
+            self.logger.warning(f"Could not persist confirmed training sample (non-blocking): {e}")
 
     def _collect_llm_training_sample(self, email_data: Dict[str, Any], llm_result: Dict[str, Any]):
         """Collect LLM classification result as training data for ML model"""
