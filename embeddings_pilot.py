@@ -4,6 +4,8 @@
 Compare, sur les mêmes échantillons et les mêmes folds de validation croisée :
 - le pipeline actuel (FeatureExtractor + RandomForestClassifier)
 - un classifieur à base d'embeddings (sentence-transformers + LogisticRegression)
+- le "fuzzy sémantique" de la note projet : similarité cosinus max avec les
+  spams déjà connus, sans entraînement supervisé (juste un seuil)
 
 Ne touche à aucun modèle de production : lecture seule de data/training_data.json.
 """
@@ -24,7 +26,9 @@ from pyantispam.ml.feature_extractor import FeatureExtractor  # noqa: E402
 from sentence_transformers import SentenceTransformer  # noqa: E402
 from sklearn.ensemble import RandomForestClassifier  # noqa: E402
 from sklearn.linear_model import LogisticRegression  # noqa: E402
-from sklearn.model_selection import StratifiedKFold, cross_validate  # noqa: E402
+from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support, roc_auc_score  # noqa: E402
+from sklearn.metrics.pairwise import cosine_similarity  # noqa: E402
+from sklearn.model_selection import StratifiedKFold  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
 EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
@@ -105,29 +109,68 @@ def evaluate_rf(
 
         clf = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, class_weight="balanced")
         clf.fit(X_train, y[train_idx])
-        _score_fold(clf, X_test, y[test_idx], pipeline_scores)
+        _score_fold(clf.predict(X_test), y[test_idx], pipeline_scores)
 
     return {k: float(np.mean(v)) for k, v in pipeline_scores.items()}
 
 
-def evaluate_embeddings(texts: List[str], y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
+def compute_embeddings(texts: List[str]) -> np.ndarray:
     print(f"Chargement du modèle d'embeddings ({EMBEDDING_MODEL})...")
     model = SentenceTransformer(EMBEDDING_MODEL)
-    X = model.encode(texts, show_progress_bar=False)
+    return model.encode(texts, show_progress_bar=False)
 
+
+def evaluate_embeddings_logreg(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
     pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
     for train_idx, test_idx in cv.split(X, y):
         clf = LogisticRegression(class_weight="balanced", max_iter=1000)
         clf.fit(X[train_idx], y[train_idx])
-        _score_fold(clf, X[test_idx], y[test_idx], pipeline_scores)
+        _score_fold(clf.predict(X[test_idx]), y[test_idx], pipeline_scores)
 
     return {k: float(np.mean(v)) for k, v in pipeline_scores.items()}
 
 
-def _score_fold(clf, X_test, y_test, pipeline_scores: Dict[str, list]):
-    from sklearn.metrics import accuracy_score, precision_recall_fscore_support
+def evaluate_semantic_fuzzy(X: np.ndarray, y: np.ndarray, cv: StratifiedKFold) -> Dict[str, float]:
+    """"Fuzzy sémantique" de la note projet : pas d'entraînement supervisé, juste
 
-    y_pred = clf.predict(X_test)
+    la similarité cosinus max de chaque mail avec les spams déjà connus. Le
+    seuil de décision est choisi sur le fold d'entraînement (celui qui maximise
+    le F1), jamais sur le test, pour ne pas tricher.
+    """
+    pipeline_scores = {"accuracy": [], "precision_macro": [], "recall_macro": [], "f1_macro": []}
+    oof_scores, oof_labels = [], []  # out-of-fold, pour un AUC global indépendant du seuil
+
+    for train_idx, test_idx in cv.split(X, y):
+        spam_train_idx = train_idx[y[train_idx] == 1]
+        sim_train = cosine_similarity(X[train_idx], X[spam_train_idx])
+        # Un spam du train ne doit pas se comparer à lui-même (similarité triviale = 1)
+        for row, global_i in enumerate(train_idx):
+            for col, spam_global_i in enumerate(spam_train_idx):
+                if global_i == spam_global_i:
+                    sim_train[row, col] = -1.0
+        train_scores = sim_train.max(axis=1)
+
+        best_threshold, best_f1 = 0.5, -1.0
+        for threshold in np.linspace(0.0, 1.0, 101):
+            preds = (train_scores >= threshold).astype(int)
+            f1 = f1_score(y[train_idx], preds, zero_division=0)
+            if f1 > best_f1:
+                best_f1, best_threshold = f1, threshold
+
+        sim_test = cosine_similarity(X[test_idx], X[spam_train_idx])
+        test_scores = sim_test.max(axis=1)
+        test_preds = (test_scores >= best_threshold).astype(int)
+
+        _score_fold(test_preds, y[test_idx], pipeline_scores)
+        oof_scores.extend(test_scores.tolist())
+        oof_labels.extend(y[test_idx].tolist())
+
+    result = {k: float(np.mean(v)) for k, v in pipeline_scores.items()}
+    result["auc"] = float(roc_auc_score(oof_labels, oof_scores))
+    return result
+
+
+def _score_fold(y_pred, y_test, pipeline_scores: Dict[str, list]):
     precision, recall, f1, _ = precision_recall_fscore_support(
         y_test, y_pred, average="macro", zero_division=0
     )
@@ -150,17 +193,21 @@ def main():
 
     rf_full_scores = evaluate_rf(samples, y, cv, content_only=False)
     rf_content_scores = evaluate_rf(samples, y, cv, content_only=True)
-    emb_scores = evaluate_embeddings(texts, y, cv)
+
+    X_emb = compute_embeddings(texts)
+    emb_scores = evaluate_embeddings_logreg(X_emb, y, cv)
+    fuzzy_scores = evaluate_semantic_fuzzy(X_emb, y, cv)
 
     print("\n=== Résultats (moyenne sur 5 folds) ===")
     print("RF 'complet' inclut sender_spam_ratio et consorts : déjà couvert par l'auto-blacklist,")
-    print("comparer sur le contenu seul (RF content-only vs embeddings) est la question pertinente.\n")
-    print(f"{'Métrique':<18}{'RF complet':<14}{'RF contenu seul':<18}{'Embeddings+LogReg':<18}")
+    print("comparer sur le contenu seul (RF content-only vs embeddings/fuzzy) est la question pertinente.\n")
+    print(f"{'Métrique':<18}{'RF complet':<14}{'RF contenu seul':<18}{'Embeddings+LogReg':<20}{'Fuzzy sémantique':<18}")
     for metric in ["accuracy", "precision_macro", "recall_macro", "f1_macro"]:
         print(
             f"{metric:<18}{rf_full_scores[metric]:<14.3f}"
-            f"{rf_content_scores[metric]:<18.3f}{emb_scores[metric]:<18.3f}"
+            f"{rf_content_scores[metric]:<18.3f}{emb_scores[metric]:<20.3f}{fuzzy_scores[metric]:<18.3f}"
         )
+    print(f"\nAUC (indépendant du seuil) du fuzzy sémantique seul : {fuzzy_scores['auc']:.3f}")
 
 
 if __name__ == "__main__":
