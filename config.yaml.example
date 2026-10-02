@@ -70,6 +70,16 @@ email_connection:
   request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
   timeout: 10         # IMAP connection timeout in seconds
 
+# rspamd shadow mode ("mode fantôme") : rspamd scores every email exactly
+# like production would, but the verdict is only logged - never acts on
+# the mail. Used to accumulate calibration data before trusting rspamd
+# enough to actually combine it into the real decision.
+rspamd:
+  enabled: false              # Off by default - opt in explicitly
+  url: "http://rspamd:11334"  # Docker service name when deployed via docker-compose.yml
+  password_env: "RSPAMD_PASSWORD"
+  timeout: 10                 # seconds; a slow/down rspamd must never block mail processing
+
 logging:
   level: "INFO"  # Niveau général : DEBUG, INFO, WARNING, ERROR
 

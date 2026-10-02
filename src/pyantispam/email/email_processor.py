@@ -13,6 +13,7 @@ from ..llm import LLMClassifier
 from ..ml import MLClassifier
 from ..filters import ListManager
 from ..stats import StatsManager
+from ..rspamd import RspamdShadowClassifier
 
 
 class EmailProcessor:
@@ -25,6 +26,7 @@ class EmailProcessor:
         self.account_configs: Dict[str, Dict[str, Any]] = {}  # Store account configurations
         self.llm_classifier = LLMClassifier(config_manager)
         self.ml_classifier = MLClassifier(config_manager)
+        self.rspamd_shadow = RspamdShadowClassifier(config_manager)
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
@@ -155,6 +157,13 @@ class EmailProcessor:
                     # Inject account context into email data for logging
                     email_data['account_name'] = account_name
 
+                    # Fetch raw bytes now (before any move/expunge below invalidates
+                    # this email_id) if rspamd shadow mode needs them later. Only
+                    # pays this extra IMAP round-trip when actually enabled.
+                    raw_message_for_shadow = (
+                        client.fetch_raw_message(email_id) if self.rspamd_shadow.is_enabled() else None
+                    )
+
                     # Process email through spam detection pipeline
                     import time
                     start_time = time.time()
@@ -190,6 +199,12 @@ class EmailProcessor:
                     # confidence threshold, not just raw accuracy). Pure observation of
                     # a decision already made and already applied — never touches mail.
                     self._log_prediction_record(email_data, decision, email_fingerprint)
+
+                    # rspamd "mode fantôme" : scores the same email independently,
+                    # logged for future calibration, never influences the decision
+                    # above (already final and already applied).
+                    if raw_message_for_shadow:
+                        self._log_rspamd_shadow(email_data, decision, email_fingerprint, raw_message_for_shadow)
 
                     results["details"].append({
                         "email_id": email_id,
@@ -520,7 +535,10 @@ class EmailProcessor:
             f"Reason: {decision['reason']}"
         )
 
-    def _already_logged(self, fingerprint: str, action: str, method: str) -> bool:
+    def _already_logged(
+        self, fingerprint: str, action: str, method: str,
+        index_path: Path = Path("data/logs/prediction_log_seen.json"),
+    ) -> bool:
         """Check (and update) the small fingerprint->last-decision index.
 
         EmailProcessor is recreated every daemon cycle (see cli.py daemon loop),
@@ -529,8 +547,11 @@ class EmailProcessor:
         prediction log fills with thousands of identical repeats of the same
         handful of unread emails instead of real signal. We persist the small
         index (one entry per email ever seen, not per cycle) instead.
+
+        index_path lets independent logs (prediction_log, rspamd shadow log)
+        keep separate dedup state - sharing one index would make the second
+        logger see every fingerprint as "already logged" by the first.
         """
-        index_path = Path("data/logs/prediction_log_seen.json")
         try:
             seen: Dict[str, List[str]] = {}
             if index_path.exists():
@@ -586,6 +607,56 @@ class EmailProcessor:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             self.logger.warning(f"Could not write prediction record (non-blocking): {e}")
+
+    def _log_rspamd_shadow(
+        self, email_data: Dict[str, Any], decision: Dict[str, Any],
+        email_fingerprint: str, raw_message: bytes,
+    ):
+        """rspamd "mode fantôme" (roadmap étape 2): score this email with rspamd
+        purely for observation, side by side with the real decision, to later
+        calibrate how much to trust/weight rspamd before ever wiring it into
+        the real pipeline. Called only after the real decision is already
+        final and already applied - a slow/down/wrong rspamd call here can
+        never change what happened to the mail.
+
+        Own dedup index (separate from _log_prediction_record's) so a still-
+        unread email doesn't get re-sent to rspamd every daemon cycle - each
+        call costs a real network round-trip (~1-1.5s), unlike the local-only
+        prediction record.
+        """
+        try:
+            action = decision.get("action")
+            method = decision.get("method")
+            if self._already_logged(
+                email_fingerprint, action, method,
+                index_path=Path("data/logs/rspamd_shadow_seen.json"),
+            ):
+                return
+
+            verdict = self.rspamd_shadow.check(raw_message)
+            if verdict is None:
+                return  # rspamd unavailable/failed this time - try again next cycle
+
+            log_path = Path("data/logs/rspamd_shadow_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+
+            record = {
+                "timestamp": time.time(),
+                "fingerprint": email_fingerprint,
+                "account": email_data.get("account_name", "unknown"),
+                "sender_email": email_data.get("sender_email", ""),
+                "real_action": action,
+                "real_method": method,
+                "real_confidence": decision.get("confidence"),
+                "rspamd_score": verdict.get("score"),
+                "rspamd_action": verdict.get("action"),
+                "rspamd_top_symbols": verdict.get("top_symbols"),
+            }
+
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except Exception as e:
+            self.logger.warning(f"Could not log rspamd shadow verdict (non-blocking): {e}")
 
     def get_account_names(self) -> List[str]:
         """Get list of configured account names"""

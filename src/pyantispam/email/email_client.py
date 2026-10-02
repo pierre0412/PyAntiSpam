@@ -197,6 +197,34 @@ class EmailClient:
             self.logger.warning(f"Error fetching email {email_id}: {e}")
             return None
 
+    def fetch_raw_message(self, email_id: str) -> Optional[bytes]:
+        """Fetch the untouched RFC822 bytes for an email, for consumers that
+        need the raw message rather than our parsed fields (e.g. the rspamd
+        shadow classifier). Kept separate from fetch_email() on purpose: the
+        parsed dict gets persisted as JSON in several places, and raw bytes
+        are not JSON-serializable.
+        """
+        if not self.imap:
+            raise ConnectionError("Not connected to IMAP server")
+
+        try:
+            if not self._is_valid_email_id(email_id):
+                return None
+
+            was_unread = self.is_email_unread(email_id)
+            self._throttle_request()
+            status, data = self.imap.fetch(email_id, "(RFC822)")
+            if status != "OK" or not data or not data[0] or len(data[0]) < 2:
+                return None
+
+            if was_unread:
+                self.mark_email_unread(email_id)
+
+            return data[0][1]
+        except Exception as e:
+            self.logger.warning(f"Error fetching raw message {email_id}: {e}")
+            return None
+
     def _parse_email(self, email_message: EmailMessage, email_id: str) -> Dict[str, Any]:
         """Parse email message into structured data"""
         # Extract sender information
