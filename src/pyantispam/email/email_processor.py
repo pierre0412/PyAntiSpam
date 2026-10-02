@@ -535,11 +535,44 @@ class EmailProcessor:
             f"Reason: {decision['reason']}"
         )
 
+    def _peek_logged(self, fingerprint: str, action: str, method: str, index_path: Path) -> bool:
+        """Read-only check: was this exact (fingerprint, action, method) already
+        marked as logged? Never writes - see _mark_logged for that.
+        """
+        try:
+            if not index_path.exists():
+                return False
+            with open(index_path, 'r', encoding='utf-8') as f:
+                seen: Dict[str, List[str]] = json.load(f)
+            return seen.get(fingerprint) == [action, method]
+        except Exception as e:
+            self.logger.warning(f"Could not read dedup index {index_path} (treating as not seen): {e}")
+            return False
+
+    def _mark_logged(self, fingerprint: str, action: str, method: str, index_path: Path):
+        """Record that (fingerprint, action, method) has been successfully logged."""
+        try:
+            seen: Dict[str, List[str]] = {}
+            if index_path.exists():
+                with open(index_path, 'r', encoding='utf-8') as f:
+                    seen = json.load(f)
+            seen[fingerprint] = [action, method]
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(index_path, 'w', encoding='utf-8') as f:
+                json.dump(seen, f, ensure_ascii=False)
+        except Exception as e:
+            self.logger.warning(f"Could not update dedup index {index_path} (non-blocking): {e}")
+
     def _already_logged(
         self, fingerprint: str, action: str, method: str,
         index_path: Path = Path("data/logs/prediction_log_seen.json"),
     ) -> bool:
-        """Check (and update) the small fingerprint->last-decision index.
+        """Check (and unconditionally mark) the small fingerprint->last-decision
+        index. Used where logging itself can't fail (local prediction_log write) -
+        for anything that can fail independently of the dedup check (e.g. an
+        rspamd network call), use _peek_logged + _mark_logged instead so a
+        failed attempt can still be retried next cycle instead of being
+        permanently marked as "done".
 
         EmailProcessor is recreated every daemon cycle (see cli.py daemon loop),
         so an in-memory dedup set wouldn't survive between cycles - a still-unread
@@ -624,18 +657,19 @@ class EmailProcessor:
         call costs a real network round-trip (~1-1.5s), unlike the local-only
         prediction record.
         """
+        shadow_index = Path("data/logs/rspamd_shadow_seen.json")
         try:
             action = decision.get("action")
             method = decision.get("method")
-            if self._already_logged(
-                email_fingerprint, action, method,
-                index_path=Path("data/logs/rspamd_shadow_seen.json"),
-            ):
+            # Read-only peek here - do NOT mark as seen yet. If the rspamd call
+            # below fails, this email must still look "unseen" next cycle so it
+            # gets retried, instead of being silently skipped forever.
+            if self._peek_logged(email_fingerprint, action, method, shadow_index):
                 return
 
             verdict = self.rspamd_shadow.check(raw_message)
             if verdict is None:
-                return  # rspamd unavailable/failed this time - try again next cycle
+                return  # rspamd unavailable/failed this time - retried next cycle
 
             log_path = Path("data/logs/rspamd_shadow_log.jsonl")
             log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -655,6 +689,9 @@ class EmailProcessor:
 
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+            # Only mark as seen now that the verdict was actually captured.
+            self._mark_logged(email_fingerprint, action, method, shadow_index)
         except Exception as e:
             self.logger.warning(f"Could not log rspamd shadow verdict (non-blocking): {e}")
 
