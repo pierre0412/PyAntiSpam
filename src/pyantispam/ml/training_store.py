@@ -37,6 +37,18 @@ def load_samples(path: Path) -> Optional[List[Dict[str, Any]]]:
         return None
 
 
+def read_samples_readonly(path: Path) -> Optional[List[Dict[str, Any]]]:
+    """Lecture seule, sans jamais déplacer ni modifier le fichier."""
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else None
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
+
+
 def write_samples_atomic(path: Path, samples: List[Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")

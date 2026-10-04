@@ -14,6 +14,7 @@ from ..ml import MLClassifier
 from ..filters import ListManager
 from ..stats import StatsManager
 from ..rspamd import RspamdShadowClassifier
+from ..embeddings import EmbeddingShadowClassifier
 
 
 class EmailProcessor:
@@ -27,6 +28,7 @@ class EmailProcessor:
         self.llm_classifier = LLMClassifier(config_manager)
         self.ml_classifier = MLClassifier(config_manager)
         self.rspamd_shadow = RspamdShadowClassifier(config_manager)
+        self.embedding_shadow = EmbeddingShadowClassifier(config_manager)
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
@@ -211,6 +213,10 @@ class EmailProcessor:
                     # above (already final and already applied).
                     if raw_message_for_shadow:
                         self._log_rspamd_shadow(email_data, decision, email_fingerprint, raw_message_for_shadow)
+
+                    # Same discipline for the embedding model: observe only.
+                    if self.embedding_shadow.is_enabled():
+                        self._log_embedding_shadow(email_data, decision, email_fingerprint)
 
                     results["details"].append({
                         "email_id": email_id,
@@ -441,6 +447,39 @@ class EmailProcessor:
         # Use sender, subject, and first 200 chars of body to create fingerprint
         content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
         return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _log_embedding_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any], email_fingerprint: str):
+        """Log the embedding model's spam probability beside the real decision.
+        Dedup first (peek), score, then mark only once the record is written, so a
+        failed scoring attempt is retried on the next cycle.
+        """
+        index = Path("data/logs/embedding_shadow_seen.json")
+        try:
+            action = decision.get("action")
+            method = decision.get("method")
+            if self._peek_logged(email_fingerprint, action, method, index):
+                return
+
+            proba = self.embedding_shadow.score(email_data)
+            if proba is None:
+                return
+
+            log_path = Path("data/logs/embedding_shadow_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "timestamp": time.time(),
+                "fingerprint": email_fingerprint,
+                "account": email_data.get("account_name", "unknown"),
+                "sender_email": email_data.get("sender_email", ""),
+                "real_action": action,
+                "real_method": method,
+                "camembert_spam_proba": round(proba, 4),
+            }
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._mark_logged(email_fingerprint, action, method, index)
+        except Exception as e:
+            self.logger.warning(f"Could not log embedding shadow score (non-blocking): {e}")
 
     def _learn_rspamd_from_blacklist(self, raw_message: bytes):
         """Best-effort: teach rspamd a blacklisted (human-confirmed) spam."""

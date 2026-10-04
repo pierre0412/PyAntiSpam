@@ -70,6 +70,12 @@ email_connection:
   request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
   timeout: 10         # IMAP connection timeout in seconds
 
+# Embedding shadow mode : a sentence-embedding model scores each email, logged
+# next to the real decision, never acting on it.
+embeddings:
+  enabled: false
+  model: "dangvantuan/sentence-camembert-base"
+
 # rspamd shadow mode ("mode fantôme") : rspamd scores every email exactly
 # like production would, but the verdict is only logged - never acts on
 # the mail. Used to accumulate calibration data before trusting rspamd

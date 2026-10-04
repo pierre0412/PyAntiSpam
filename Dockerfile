@@ -27,10 +27,15 @@ COPY pyproject.toml requirements.txt ./
 COPY src/ ./src/
 COPY force_retrain.py force_retrain_real.py ./
 
-# Installer les dépendances Python et le paquet
+# Installer les dépendances Python et le paquet.
+# torch depuis l'index CPU : la version par défaut tire des paquets CUDA de plusieurs Go.
 RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir -e .
+
+# Cache du modèle d'embeddings dans le volume data/ (téléchargé une seule fois)
+ENV HF_HOME=/app/data/hf_cache
 
 # Créer les répertoires de données avec bonnes permissions
 RUN mkdir -p /app/data /app/logs /app/config && \
