@@ -8,6 +8,7 @@ from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
+from ..ml.training_store import load_samples, write_samples_atomic
 from ..rspamd import RspamdShadowClassifier
 from ..stats.stats_manager import StatsManager
 
@@ -555,26 +556,13 @@ class FeedbackProcessor:
         """Immediately persist a training sample to training_data.json"""
         try:
             training_data_file = Path("data/training_data.json")
-            training_data_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Load existing samples
-            existing_samples = []
-            if training_data_file.exists():
-                try:
-                    with open(training_data_file, 'r', encoding='utf-8') as f:
-                        existing_samples = json.load(f)
-                    if not isinstance(existing_samples, list):
-                        existing_samples = []
-                except json.JSONDecodeError:
-                    self.logger.warning("Training data file corrupted, creating new one")
-                    existing_samples = []
+            existing_samples = load_samples(training_data_file)
+            if existing_samples is None:
+                return
 
-            # Add new sample
             existing_samples.append(sample)
-
-            # Save back to file
-            with open(training_data_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_samples, f, indent=2, ensure_ascii=False)
+            write_samples_atomic(training_data_file, existing_samples)
 
             self.logger.debug(f"Persisted training sample to disk (total: {len(existing_samples)})")
         except Exception as e:

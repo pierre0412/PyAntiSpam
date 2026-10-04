@@ -20,6 +20,7 @@ except ImportError:
     sklearn_available = False
 
 from .feature_extractor import FeatureExtractor
+from .training_store import load_samples, write_samples_atomic
 
 
 class MLClassifier:
@@ -480,16 +481,9 @@ class MLClassifier:
         feedback accumulated in previous runs.
         """
         try:
-            existing: List[Dict[str, Any]] = []
-            if self.training_data_file.exists():
-                try:
-                    with open(self.training_data_file, 'r', encoding='utf-8') as f:
-                        existing = json.load(f)
-                    if not isinstance(existing, list):
-                        existing = []
-                except (json.JSONDecodeError, OSError) as e:
-                    self.logger.warning(f"Could not read existing training data, starting fresh: {e}")
-                    existing = []
+            existing = load_samples(self.training_data_file)
+            if existing is None:
+                return
 
             seen = set()
             merged: List[Dict[str, Any]] = []
@@ -502,8 +496,7 @@ class MLClassifier:
                 seen.add(fingerprint)
                 merged.append(sample)
 
-            with open(self.training_data_file, 'w', encoding='utf-8') as f:
-                json.dump(merged, f, indent=2, ensure_ascii=False)
+            write_samples_atomic(self.training_data_file, merged)
         except Exception as e:
             self.logger.error(f"Error saving training data: {e}")
 
