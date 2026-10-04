@@ -178,6 +178,12 @@ class EmailProcessor:
                     # Record statistics (with fingerprint to avoid double counting)
                     self.stats_manager.record_detection(decision, processing_time, email_fingerprint)
 
+                    # Blacklist hits are backed by human feedback (3+ signalements), so
+                    # they're the one kind of automatic verdict safe to teach rspamd from.
+                    # Never RF/LLM verdicts. Taken before the move below invalidates the id.
+                    if decision.get("method") == "blacklist" and raw_message_for_shadow:
+                        self._learn_rspamd_from_blacklist(raw_message_for_shadow)
+
                     # Take action based on decision
                     if decision["action"] == "SPAM":
                         results["spam_detected"] += 1
@@ -435,6 +441,13 @@ class EmailProcessor:
         # Use sender, subject, and first 200 chars of body to create fingerprint
         content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
         return hashlib.md5(content.encode('utf-8')).hexdigest()
+
+    def _learn_rspamd_from_blacklist(self, raw_message: bytes):
+        """Best-effort: teach rspamd a blacklisted (human-confirmed) spam."""
+        try:
+            self.rspamd_shadow.learn_spam(raw_message)
+        except Exception as e:
+            self.logger.warning(f"rspamd learn from blacklist failed (non-blocking): {e}")
 
     def _collect_confirmed_training_sample(self, email_data: Dict[str, Any], is_spam: bool):
         """Persist a training sample for a whitelist/blacklist hit.
