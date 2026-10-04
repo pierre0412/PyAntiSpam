@@ -473,7 +473,7 @@ class EmailProcessor:
                 "sender_email": email_data.get("sender_email", ""),
                 "real_action": action,
                 "real_method": method,
-                "camembert_spam_proba": round(proba, 4),
+                "embedding_spam_proba": round(proba, 4),
             }
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
