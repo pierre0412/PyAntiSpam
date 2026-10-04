@@ -8,12 +8,14 @@ from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
-from ..ml.training_store import load_samples, write_samples_atomic
+from ..ml.training_store import load_samples, read_samples_readonly, write_samples_atomic
 from ..rspamd import RspamdShadowClassifier
 from ..stats.stats_manager import StatsManager
 
 if TYPE_CHECKING:
     from ..config import ConfigManager
+
+RETRAIN_STATE_FILE = Path("data/retrain_state.json")
 
 
 class FeedbackProcessor:
@@ -83,16 +85,30 @@ class FeedbackProcessor:
                 self.logger.error(f"Error processing feedback folder {folder_name}: {e}")
                 results["errors"] += 1
 
-        # Retrain ML model if we have enough new samples
-        if len(self.training_samples) >= self.config.get("learning.retrain_threshold", 10):
-            retrain_result = self._retrain_ml_model()
-            # Record retraining in stats
-            if retrain_result:
-                self.stats_manager.record_ml_retrain(retrain_result)
-                results["ml_retraining_performed"] = True
-                results["ml_retrain_accuracy"] = retrain_result.get("accuracy", 0)
-
         return results
+
+    def _register_feedback_and_maybe_retrain(self) -> Optional[Dict[str, Any]]:
+        """Count one new human feedback; retrain every N of them, persistently across cycles."""
+        threshold = self.config.get("learning.retrain_threshold", 10)
+        state = {"since_retrain": 0}
+        try:
+            if RETRAIN_STATE_FILE.exists():
+                state.update(json.loads(RETRAIN_STATE_FILE.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, OSError):
+            pass
+
+        state["since_retrain"] = int(state.get("since_retrain", 0)) + 1
+        result = None
+        if state["since_retrain"] >= threshold:
+            result = self._retrain_ml_model()
+            if result and result.get("success"):
+                state["since_retrain"] = 0
+                state["last_retrain"] = time.time()
+                self.stats_manager.record_ml_retrain(result)
+
+        RETRAIN_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RETRAIN_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+        return result
 
     def _compute_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
         """Compute a fingerprint matching EmailProcessor logic for overrides"""
@@ -206,6 +222,7 @@ class FeedbackProcessor:
 
                         if feedback_result.get("ml_sample"):
                             results["ml_samples"] += 1
+                            self._register_feedback_and_maybe_retrain()
 
                         if feedback_result.get("restored"):
                             results["restored"] += 1
@@ -437,17 +454,18 @@ class FeedbackProcessor:
             return False
 
     def _retrain_ml_model(self):
-        """Retrain ML model with accumulated feedback samples"""
+        """Retrain on the full stored history, never on just the current batch."""
         try:
-            self.logger.warning(f"🎓 DÉCLENCHEMENT RÉENTRAÎNEMENT ML avec {len(self.training_samples)} échantillons de feedback utilisateur")
+            samples = read_samples_readonly(Path("data/training_data.json"))
+            if not samples:
+                return {"success": False, "error": "no training data readable"}
+            self.logger.warning(f"🎓 DÉCLENCHEMENT RÉENTRAÎNEMENT ML sur {len(samples)} échantillons (historique complet)")
 
-            result = self.ml_classifier.train_with_samples(self.training_samples)
+            result = self.ml_classifier.train_with_samples(samples)
 
             if result["success"]:
                 accuracy = result.get('accuracy', 0)
                 self.logger.warning(f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès ! Nouvelle précision: {accuracy:.3f}")
-                # Clear samples after successful training
-                self.training_samples.clear()
                 return result
             else:
                 error = result.get('error', 'unknown')
