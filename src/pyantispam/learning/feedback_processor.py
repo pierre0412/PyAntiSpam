@@ -555,16 +555,7 @@ class FeedbackProcessor:
     def _persist_training_sample(self, sample: Dict[str, Any]):
         """Immediately persist a training sample to training_data.json"""
         try:
-            training_data_file = Path("data/training_data.json")
-
-            existing_samples = load_samples(training_data_file)
-            if existing_samples is None:
-                return
-
-            existing_samples.append(sample)
-            write_samples_atomic(training_data_file, existing_samples)
-
-            self.logger.debug(f"Persisted training sample to disk (total: {len(existing_samples)})")
+            self.ml_classifier.persist_sample(sample)
         except Exception as e:
             self.logger.error(f"Failed to persist training sample: {e}")
 

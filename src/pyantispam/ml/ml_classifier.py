@@ -496,6 +496,10 @@ class MLClassifier:
                 seen.add(fingerprint)
                 merged.append(sample)
 
+            # Rien de nouveau : inutile de réécrire 6 Mo sur le SSD
+            if len(merged) == len(existing):
+                return
+
             write_samples_atomic(self.training_data_file, merged)
         except Exception as e:
             self.logger.error(f"Error saving training data: {e}")
