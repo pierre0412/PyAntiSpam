@@ -11,6 +11,7 @@ Ne touche à aucun modèle de production : lecture seule de data/training_data.j
 """
 
 import json
+import os
 import re
 import sys
 from email.header import decode_header
@@ -31,7 +32,7 @@ from sklearn.metrics.pairwise import cosine_similarity  # noqa: E402
 from sklearn.model_selection import StratifiedGroupKFold  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "paraphrase-multilingual-MiniLM-L12-v2")
 MAX_BODY_CHARS = 2000  # ~512 tokens, cf. doc projet
 N_SPLITS = 5
 
