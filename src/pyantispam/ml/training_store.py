@@ -45,6 +45,7 @@ def write_samples_atomic(path: Path, samples: List[Dict[str, Any]]) -> None:
             json.dump(samples, f, indent=2, ensure_ascii=False)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, 0o644)  # mkstemp creates 0600, which would lock out the host user
         os.replace(tmp, path)
     except Exception:
         try:
