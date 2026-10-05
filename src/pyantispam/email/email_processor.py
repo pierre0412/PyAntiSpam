@@ -29,6 +29,8 @@ class EmailProcessor:
         self.ml_classifier = MLClassifier(config_manager)
         self.rspamd_shadow = RspamdShadowClassifier(config_manager)
         self.embedding_shadow = EmbeddingShadowClassifier(config_manager)
+        self.lists_shadow = bool(config_manager.get("lists.shadow", False))
+        self._last_list_verdict = None
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
@@ -170,6 +172,7 @@ class EmailProcessor:
                     import time
                     start_time = time.time()
                     decision = self._process_single_email(email_data)
+                    decision["shadow_list"] = self._last_list_verdict
                     processing_time = time.time() - start_time
 
                     results["processed"] += 1
@@ -356,9 +359,13 @@ class EmailProcessor:
         sender_email = email_data.get("sender_email", "")
         sender_domain = email_data.get("sender_domain", "")
 
-        # Step 1: Check whitelist/blacklist (highest priority)
+        # Step 1: Check whitelist/blacklist (highest priority, unless in shadow mode:
+        # then the list verdict is only recorded and the models decide)
         whitelist_result = self._check_whitelist(sender_email, sender_domain)
-        if whitelist_result:
+        blacklist_result = None if whitelist_result else self._check_blacklist(sender_email, sender_domain)
+        self._last_list_verdict = "whitelist" if whitelist_result else ("blacklist" if blacklist_result else None)
+
+        if whitelist_result and not self.lists_shadow:
             self._collect_confirmed_training_sample(email_data, is_spam=False)
             return {
                 "action": "KEEP",
@@ -367,8 +374,7 @@ class EmailProcessor:
                 "method": "whitelist"
             }
 
-        blacklist_result = self._check_blacklist(sender_email, sender_domain)
-        if blacklist_result:
+        if blacklist_result and not self.lists_shadow:
             self._collect_confirmed_training_sample(email_data, is_spam=True)
             return {
                 "action": "SPAM",
@@ -686,6 +692,7 @@ class EmailProcessor:
                 "action": action,
                 "confidence": decision.get("confidence"),
                 "method": method,
+                "shadow_list": decision.get("shadow_list"),
             }
 
             with open(log_path, 'a', encoding='utf-8') as f:
