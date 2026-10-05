@@ -85,29 +85,45 @@ class FeedbackProcessor:
                 self.logger.error(f"Error processing feedback folder {folder_name}: {e}")
                 results["errors"] += 1
 
+        self._retrain_if_due()
         return results
 
-    def _register_feedback_and_maybe_retrain(self) -> Optional[Dict[str, Any]]:
-        """Count one new human feedback; retrain every N of them, persistently across cycles."""
-        threshold = self.config.get("learning.retrain_threshold", 10)
-        state = {"since_retrain": 0}
+    def _load_retrain_state(self) -> Dict[str, Any]:
+        state: Dict[str, Any] = {"since_retrain": 0}
         try:
             if RETRAIN_STATE_FILE.exists():
                 state.update(json.loads(RETRAIN_STATE_FILE.read_text(encoding="utf-8")))
         except (json.JSONDecodeError, OSError):
             pass
+        return state
 
-        state["since_retrain"] = int(state.get("since_retrain", 0)) + 1
-        result = None
-        if state["since_retrain"] >= threshold:
-            result = self._retrain_ml_model()
-            if result and result.get("success"):
-                state["since_retrain"] = 0
-                state["last_retrain"] = time.time()
-                self.stats_manager.record_ml_retrain(result)
-
+    def _save_retrain_state(self, state: Dict[str, Any]) -> None:
         RETRAIN_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         RETRAIN_STATE_FILE.write_text(json.dumps(state), encoding="utf-8")
+
+    def _count_feedback(self) -> None:
+        """Count one new human feedback. Retraining happens once per cycle, see _retrain_if_due."""
+        state = self._load_retrain_state()
+        state["since_retrain"] = int(state.get("since_retrain", 0)) + 1
+        self._save_retrain_state(state)
+
+    def _retrain_if_due(self) -> Optional[Dict[str, Any]]:
+        """Retrain once per cycle if at least N feedbacks have accumulated since the last retrain.
+
+        A burst of corrections (e.g. 100 mails re-filed at once) yields one retrain on
+        the full history, not one per N feedbacks.
+        """
+        threshold = self.config.get("learning.retrain_threshold", 10)
+        state = self._load_retrain_state()
+        if int(state.get("since_retrain", 0)) < threshold:
+            return None
+
+        result = self._retrain_ml_model()
+        if result and result.get("success"):
+            state["since_retrain"] = 0
+            state["last_retrain"] = time.time()
+            self.stats_manager.record_ml_retrain(result)
+            self._save_retrain_state(state)
         return result
 
     def _compute_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
@@ -222,7 +238,7 @@ class FeedbackProcessor:
 
                         if feedback_result.get("ml_sample"):
                             results["ml_samples"] += 1
-                            self._register_feedback_and_maybe_retrain()
+                            self._count_feedback()
 
                         if feedback_result.get("restored"):
                             results["restored"] += 1
