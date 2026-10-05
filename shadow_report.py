@@ -10,10 +10,22 @@ Usage : python3 shadow_report.py [seuil_camembert]
 import json
 import sys
 from collections import Counter, defaultdict
+from datetime import datetime
+from email.header import decode_header
 from pathlib import Path
 
 LOGS = Path("data/logs")
 THRESHOLD = float(sys.argv[1]) if len(sys.argv) > 1 else 0.5
+
+
+def decode_subject(raw: str) -> str:
+    try:
+        return "".join(
+            part.decode(enc or "utf-8", errors="replace") if isinstance(part, bytes) else part
+            for part, enc in decode_header(raw)
+        )
+    except Exception:
+        return raw
 
 
 def load_jsonl(path: Path):
@@ -55,13 +67,17 @@ def main():
         print(f"compte {acc} : {total} mails, accord {agree / total:.0%}")
     print()
 
-    print("Désaccords à relire (expéditeur, sujet tronqué) :")
+    print("Désaccords à relire, du plus confiant au moins confiant :")
+    disagreements = []
     for p, proba in joined:
         cam = "SPAM" if proba >= THRESHOLD else "KEEP"
         if p["action"] != cam:
-            subject = (p.get("subject") or "")[:60]
-            print(f"  [{p['account']}] pyantispam={p['action']:<4} camembert={cam:<4} "
-                  f"p={proba:.2f} | {p.get('sender_email', '')} | {subject}")
+            disagreements.append((proba, p, cam))
+    for proba, p, cam in sorted(disagreements, key=lambda x: -x[0]):
+        subject = decode_subject(p.get("subject") or "")[:70]
+        when = datetime.fromtimestamp(p["timestamp"]).strftime("%d/%m %H:%M")
+        print(f"  {when} [{p['account']}] pyantispam={p['action']:<4} camembert={cam:<4} "
+              f"p={proba:.2f} | {p.get('sender_email', '')} | {subject}")
 
 
 if __name__ == "__main__":
