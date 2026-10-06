@@ -68,10 +68,36 @@ def load_data():
     first = {}
     for r in load_jsonl(LOGS / "prediction_log.jsonl"):
         first.setdefault(r["fingerprint"], r)
-    return feedback, emb, first
+    rf = {}
+    for r in load_jsonl(LOGS / "ml_shadow_log.jsonl"):
+        rf.setdefault(r["fingerprint"], r["rf_spam_proba"])
+    return feedback, emb, first, rf
 
 
-def global_report(args, feedback, emb, first):
+def rf_comparison(args, feedback, emb, first, rf):
+    """RF, CamemBERT et leur moyenne sur les mêmes mails (ceux qui ont les trois scores)."""
+    cutoff = time.time() - args.min_age_hours * 3600
+    keys = [fp for fp in first if fp in rf and fp in emb and first[fp]["timestamp"] <= cutoff]
+    print(f"comparaison RF / CamemBERT / moyenne, sur {len(keys)} mails ayant les trois scores")
+    if not keys:
+        return
+    systems = {
+        "RF": lambda fp: rf[fp],
+        "CamemBERT": lambda fp: emb[fp],
+        "moyenne": lambda fp: (rf[fp] + emb[fp]) / 2,
+    }
+    print(f"{'système':<12} {'n':>5} {'TP':>4} {'FN':>4} {'FP':>4} {'TN':>5} {'précision':>10} {'rappel':>8}")
+    for name, score in systems.items():
+        c = Counter()
+        for fp in keys:
+            label_spam = feedback[fp] == "SPAM" if fp in feedback else first[fp]["action"] == "SPAM"
+            add(c, label_spam, score(fp) >= args.threshold)
+        print(f"{name:<12} {len(keys):>5} {c['TP']:>4} {c['FN']:>4} {c['FP']:>4} {c['TN']:>5} "
+              f"{precision(c):>10.2f} {recall(c):>8.2f}")
+    print()
+
+
+def global_report(args, feedback, emb, first, rf):
     cutoff = time.time() - args.min_age_hours * 3600
     pa, cam = Counter(), Counter()
     corrected = Counter()
@@ -100,6 +126,8 @@ def global_report(args, feedback, emb, first):
             continue
         print(f"{name:<12} {sum(c.values()):>5} {c['TP']:>4} {c['FN']:>4} {c['FP']:>4} {c['TN']:>5} "
               f"{precision(c):>10.2f} {recall(c):>8.2f}")
+    print()
+    rf_comparison(args, feedback, emb, first, rf)
 
 
 def series_report(args, feedback, first):
@@ -139,11 +167,11 @@ def main():
     parser.add_argument("--pas-heures", type=float, default=12.0, help="taille des tranches de la série")
     args = parser.parse_args()
 
-    feedback, emb, first = load_data()
+    feedback, emb, first, rf = load_data()
     if args.depuis:
         series_report(args, feedback, first)
     else:
-        global_report(args, feedback, emb, first)
+        global_report(args, feedback, emb, first, rf)
 
 
 if __name__ == "__main__":
