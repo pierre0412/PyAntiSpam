@@ -134,6 +134,29 @@ class MLClassifier:
                 "method": "ml_error"
             }
 
+    def spam_probability(self, email_data: Dict[str, Any]) -> Optional[float]:
+        """Raw RF spam probability, before the marketing-rule override in classify().
+
+        For observation only (calibration logs): never used to decide anything,
+        so a plain probability is more useful here than the final action. Never
+        raises; returns None if the model is unavailable or scoring fails.
+        """
+        if not self.is_available():
+            return None
+        try:
+            features = self.feature_extractor.extract_features(email_data)
+            feature_vector = self._features_to_vector(features)
+            feature_vector_scaled = self.scaler.transform([feature_vector])
+            probabilities = self.model.predict_proba(feature_vector_scaled)[0]
+            if len(probabilities) == 1:
+                # Single-class model: that class is all we have.
+                return float(probabilities[0]) if self.model.classes_[0] == 1 else 1.0 - float(probabilities[0])
+            spam_index = list(self.model.classes_).index(1)
+            return float(probabilities[spam_index])
+        except Exception as e:
+            self.logger.debug(f"spam_probability unavailable: {e}")
+            return None
+
     def _features_to_vector(self, features: Dict[str, float]) -> np.ndarray:
         """Convert feature dictionary to numpy vector"""
         vector = []
