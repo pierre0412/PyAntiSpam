@@ -5,8 +5,9 @@ Lecture seule. Ne nécessite aucune étiquette : montre où les deux systèmes
 s'accordent, où ils divergent, et sur quels mails il faudrait une relecture.
 
 Si data/human_verdicts.json existe, chaque désaccord affiche le verdict humain
-déjà relu, et les fenêtres marquées exclude_from_agreement sont retirées du
-tableau d'accord (rafales dues à un mode de fonctionnement, pas à un modèle).
+déjà relu. Les fenêtres marquées exclude_from_agreement (rafales dues à un mode
+de fonctionnement, par exemple les listes désactivées) restent affichées, mais
+sont comptées à part et étiquetées [rafale] dans les désaccords.
 
 Usage : python3 shadow_report.py [seuil_camembert]
 """
@@ -74,17 +75,17 @@ def main():
     joined = [(pred[k], emb[k]) for k in emb if k in pred and emb[k] is not None]
     verdicts = load_verdicts()
     windows = [v for v in verdicts if v.get("exclude_from_agreement")]
-    excluded = [(p, proba) for p, proba in joined if excluded_window(p, windows)]
-    joined = [(p, proba) for p, proba in joined if not excluded_window(p, windows)]
     print(f"mails traités avec score CamemBERT : {len(joined)} (seuil {THRESHOLD})")
-    if excluded:
-        print(f"exclus du tableau d'accord (fenêtres de verdicts) : {len(excluded)}")
     print()
 
     table = Counter()
     by_account = defaultdict(Counter)
+    burst = Counter()
     for p, proba in joined:
         cam = "SPAM" if proba >= THRESHOLD else "KEEP"
+        if excluded_window(p, windows):
+            burst[(p["action"], cam)] += 1
+            continue
         table[(p["action"], cam)] += 1
         by_account[p["account"]][(p["action"], cam)] += 1
 
@@ -101,6 +102,13 @@ def main():
         print(f"compte {acc} : {total} mails, accord {agree / total:.0%}")
     print()
 
+    if burst:
+        total = sum(burst.values())
+        agree = burst[("SPAM", "SPAM")] + burst[("KEEP", "KEEP")]
+        print(f"rafale (listes désactivées, non représentative) : {total} mails, "
+              f"accord {agree / total:.0%}")
+        print()
+
     print("Désaccords à relire, du plus confiant au moins confiant :")
     disagreements = []
     for p, proba in joined:
@@ -112,6 +120,8 @@ def main():
         when = datetime.fromtimestamp(p["timestamp"]).strftime("%d/%m %H:%M")
         verdict = find_verdict(p, subject, verdicts)
         label = f" | verdict: {verdict['verdict']} (juste : {verdict['who_is_right']})" if verdict else ""
+        if excluded_window(p, windows):
+            label = " [rafale]" + label
         print(f"  {when} [{p['account']}] pyantispam={p['action']:<4} camembert={cam:<4} "
               f"p={proba:.2f} | {p.get('sender_email', '')} | {subject[:70]}{label}")
 
