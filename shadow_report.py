@@ -4,6 +4,10 @@
 Lecture seule. Ne nécessite aucune étiquette : montre où les deux systèmes
 s'accordent, où ils divergent, et sur quels mails il faudrait une relecture.
 
+Si data/human_verdicts.json existe, chaque désaccord affiche le verdict humain
+déjà relu, et les fenêtres marquées exclude_from_agreement sont retirées du
+tableau d'accord (rafales dues à un mode de fonctionnement, pas à un modèle).
+
 Usage : python3 shadow_report.py [seuil_camembert]
 """
 
@@ -15,6 +19,7 @@ from email.header import decode_header
 from pathlib import Path
 
 LOGS = Path("data/logs")
+VERDICTS = Path("data/human_verdicts.json")
 THRESHOLD = float(sys.argv[1]) if len(sys.argv) > 1 else 0.5
 
 
@@ -34,6 +39,29 @@ def load_jsonl(path: Path):
     return [json.loads(line) for line in path.open(encoding="utf-8")]
 
 
+def load_verdicts():
+    if not VERDICTS.exists():
+        return []
+    return json.loads(VERDICTS.read_text(encoding="utf-8"))
+
+
+def excluded_window(p, windows):
+    when = datetime.fromtimestamp(p["timestamp"])
+    for w in windows:
+        if w["account"] == p["account"] and datetime.fromisoformat(w["from"]) <= when <= datetime.fromisoformat(w["to"]):
+            return True
+    return False
+
+
+def find_verdict(p, subject, verdicts):
+    for v in verdicts:
+        if "sender" not in v or v.get("exclude_from_agreement"):
+            continue
+        if v["sender"] == p.get("sender_email") and subject.startswith(v["subject"][:40]):
+            return v
+    return None
+
+
 def main():
     pred = {}
     for r in load_jsonl(LOGS / "prediction_log.jsonl"):
@@ -44,7 +72,13 @@ def main():
         emb[r["fingerprint"]] = r.get("embedding_spam_proba", r.get("camembert_spam_proba"))
 
     joined = [(pred[k], emb[k]) for k in emb if k in pred and emb[k] is not None]
+    verdicts = load_verdicts()
+    windows = [v for v in verdicts if v.get("exclude_from_agreement")]
+    excluded = [(p, proba) for p, proba in joined if excluded_window(p, windows)]
+    joined = [(p, proba) for p, proba in joined if not excluded_window(p, windows)]
     print(f"mails traités avec score CamemBERT : {len(joined)} (seuil {THRESHOLD})")
+    if excluded:
+        print(f"exclus du tableau d'accord (fenêtres de verdicts) : {len(excluded)}")
     print()
 
     table = Counter()
@@ -74,10 +108,12 @@ def main():
         if p["action"] != cam:
             disagreements.append((proba, p, cam))
     for proba, p, cam in sorted(disagreements, key=lambda x: -x[0]):
-        subject = decode_subject(p.get("subject") or "")[:70]
+        subject = decode_subject(p.get("subject") or "")
         when = datetime.fromtimestamp(p["timestamp"]).strftime("%d/%m %H:%M")
+        verdict = find_verdict(p, subject, verdicts)
+        label = f" | verdict: {verdict['verdict']} (juste : {verdict['who_is_right']})" if verdict else ""
         print(f"  {when} [{p['account']}] pyantispam={p['action']:<4} camembert={cam:<4} "
-              f"p={proba:.2f} | {p.get('sender_email', '')} | {subject}")
+              f"p={proba:.2f} | {p.get('sender_email', '')} | {subject[:70]}{label}")
 
 
 if __name__ == "__main__":
