@@ -1,537 +1,214 @@
 ### Projet démarré en vibecoding et retouché à la main :)
 # PyAntiSpam
 
-Système intelligent de détection et filtrage automatique des spams par email utilisant un pipeline en 3 étapes : listes manuelles, machine learning et LLM.
-Le script peut tourner en continu ou être lancé ponctuellement. Il peut être utilisé seul ou tourner dans un container Docker (voir README-docker.md et /scripts/docker-run.sh)
+Antispam IMAP auto-hébergé, indépendant de l'hébergeur de messagerie. Il surveille une ou plusieurs boîtes, déplace les spams dans un dossier dédié, et apprend uniquement des corrections que vous faites depuis votre client mail.
 
-## Fonctionnalités
+Il tourne en continu (mode daemon, conseillé via Docker, voir [README-Docker.md](README-Docker.md)) ou ponctuellement en ligne de commande.
 
-### ✅ Détection Multi-Niveaux
-- **🥇 Whitelist/Blacklist** : Contrôle manuel prioritaire (emails et domaines entiers)
-- **🥈 Machine Learning** : Random Forest avec 79 features incluant historique sender, analyse temporelle et textuelle avancée
-- **🥉 Large Language Models** : OpenAI GPT et Anthropic Claude pour les cas complexes
+## Principes
 
-### ✅ Gestion Avancée des Listes
-- **Auto-détection** : emails vs domaines automatiquement
-- **Validation** : normalisation et vérification des entrées
-- **Import/Export** : sauvegarde et restauration des listes
-- **Domaines entiers** : `example.com` bloque tous les `*@example.com`
+- **Ne jamais perdre un mail.** Dans le doute, le mail est gardé. Un spam est *déplacé*, jamais supprimé (sauf purge explicite, désactivée par défaut).
+- **Apprendre seulement de l'utilisateur.** Les modèles n'apprennent que de vos reclassements (dossiers de feedback). Jamais de leurs propres décisions ni de celles du LLM.
+- **Mesurer avant de faire confiance.** Les nouveaux classifieurs tournent d'abord en « mode fantôme » : ils notent leur avis à côté de la vraie décision, sans agir.
 
-### ✅ Multi-Comptes & IMAP
-- **Support multi-serveurs** : Gmail, Outlook, serveurs personnalisés tant que c'est de l'IMAP
-- **Gestion dossiers** : création automatique avec conventions IMAP
-- **Traitement robuste** : gestion des erreurs et emails supprimés
-- **Nettoyage automatique** : suppression des anciens spams après X jours
+## Chaîne de décision
 
-### ✅ Configuration Flexible
-- **YAML** : configuration principale centralisée
-- **Variables d'environnement** : clés API et mots de passe sécurisés
-- **Seuils ajustables** : confiance ML, utilisation LLM
+Chaque mail **non lu** de la boîte de réception passe dans cet ordre :
 
-### ✅ Statistiques & Monitoring
-- **Tracking complet** : emails traités, spams détectés, méthodes utilisées
-- **Apprentissage suivi** : feedback traité, échantillons ML, réentraînements
-- **Performance mesurée** : temps de traitement, erreurs, efficacité
-- **Historique quotidien** : activité des derniers jours
-- **Export des données** : sauvegarde et analyse avancée
+```
+Mail non lu
+    │
+    ├─ 1. Liste blanche / noire ─────────── GARDER / SPAM   (sauf lists.shadow: true)
+    ├─ 2. Correction déjà faite par vous ── votre décision  (mémoire des corrections)
+    ├─ 3. Random Forest, si confiant ────── GARDER / SPAM   (confiance > ml_confidence_threshold)
+    ├─ 4. LLM, pour les cas incertains ──── GARDER / SPAM   (verdict mis en cache)
+    └─ 5. Par défaut ────────────────────── GARDER
+```
 
-### ✅ Apprentissage par Feedback
-- **Dossiers spéciaux** : correction facile via votre client email
-- **Auto-apprentissage** : whitelist/blacklist et amélioration ML
-- **Routage intelligent** : emails corrigés placés correctement
-- **Réentraînement automatique** : modèle ML s'améliore en continu
-- **Auto-blacklist/whitelist** : détection des expéditeurs récurrents
-- **Persistance immédiate** : sauvegarde des échantillons en temps réel
+- Un mail lu avant le passage du daemon n'est pas traité.
+- Un mail gardé reste non lu.
+- Une règle « marketing » écrite à la main peut s'ajouter au Random Forest (`classify_marketing_as_spam`). Elle est **désactivée par défaut** : à poids fixes et sans apprentissage, elle classait en spam des mails de fournisseurs.
+
+## Apprentissage
+
+### Dossiers de feedback
+
+Ils sont créés automatiquement dans chaque compte. Déplacez-y un mail depuis votre client :
+
+| Dossier | Effet | Le mail finit dans |
+|---|---|---|
+| `PYANTISPAM_IS_SPAM` | Spam manqué : appris comme spam | le dossier spam |
+| `PYANTISPAM_NOT_SPAM` | Faux positif : appris comme légitime | la boîte de réception |
+| `PYANTISPAM_BLACKLIST` | Ajoute l'expéditeur à la liste noire et l'apprend | le dossier spam |
+| `PYANTISPAM_WHITELIST` | Ajoute l'expéditeur à la liste blanche et l'apprend | la boîte de réception |
+
+Les dossiers sont traités à chaque cycle. Le mail est copié vers sa destination avant d'être retiré du dossier de feedback.
+
+Chaque reclassement :
+1. est ajouté à `data/training_data.json`, sans jamais écraser l'existant ;
+2. est mémorisé (`data/llm_cache.json`) : un mail identique (même expéditeur, même sujet, même début de corps) recevra désormais votre décision ;
+3. est appris par rspamd (`learnspam` / `learnham`), si rspamd est activé ;
+4. fait avancer le compteur de réentraînement (`data/retrain_state.json`).
+
+### Réentraînement
+
+Quand `learning.retrain_threshold` reclassements (10 par défaut) sont atteints, le Random Forest est réentraîné **une fois en fin de cycle, sur tout l'historique**. Une rafale de corrections donne donc un seul réentraînement.
+
+Pondération des exemples : 1 par défaut, 1,5 pour un expéditeur déjà corrigé 2 fois, 5 pour un expéditeur récurrent (3 corrections ou plus).
+
+Si le modèle est absent ou si le jeu de paramètres change, il est réentraîné sur l'historique. Sans données, il reste indisponible, et les mails sont gardés.
+
+### Listes automatiques
+
+Après `auto_blacklist_threshold` reclassements « spam » (3 par défaut) pour un même expéditeur, il passe en liste noire. Même principe pour la liste blanche. Voir `pyantispam recurring-senders`.
+
+## Le Random Forest
+
+81 paramètres extraits de chaque mail :
+
+- **Expéditeur (11)** : historique de vos corrections (ratio spam, nombre de feedbacks, récurrence), forme de l'adresse, TLD suspect
+- **Sujet (15)** et **contenu (25)** : longueur, majuscules, ponctuation, mots-clés (urgence, argent, phishing, marketing), liens, liens de suivi, boutons d'action, prix
+- **Texte (5)** : entropie, diversité lexicale, répétitions
+- **HTML (5)** : ratio HTML/texte, images, formulaires, scripts, densité de liens
+- **En-têtes (10)** : SPF, DKIM, DMARC, cohérence From/DKIM et Message-ID, Reply-To, nombre de relais, `List-Unsubscribe`, score `X-Spam-Status` de l'hébergeur
+- **Horaire (5)** et **interactions (5)** entre signaux
+
+## Modes fantôme
+
+Ils notent un score pour chaque mail, à côté de la vraie décision, sans jamais agir.
+
+| Classifieur | Activation | Journal |
+|---|---|---|
+| Random Forest (probabilité brute, même quand une liste ou le LLM décide) | toujours | `data/logs/ml_shadow_log.jsonl` |
+| CamemBERT (`sentence-camembert-base` + régression logistique réapprise sur vos reclassements) | `embeddings.enabled` | `data/logs/embedding_shadow_log.jsonl` |
+| rspamd (stack Docker fournie) | `rspamd.enabled` | `data/logs/rspamd_shadow_log.jsonl` |
+| Listes blanche / noire | `lists.shadow` | champ `shadow_list` de `prediction_log.jsonl` |
+
+Le journal `data/logs/prediction_log.jsonl` contient une ligne par décision réelle.
 
 ## Installation
 
 ```bash
-# Cloner le projet
 git clone https://github.com/pierre0412/PyAntiSpam.git
 cd PyAntiSpam
-
-# Créer environnement virtuel
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# ou venv\Scripts\activate  # Windows
-
-# Installer les dépendances
+source venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # seulement pour CamemBERT
+pip install -r requirements.txt
 pip install -e .
 ```
 
 ## Configuration
 
-### 1. Configuration initiale
-
 ```bash
-# Configuration initiale (crée config.yaml et .env)
-pyantispam setup
-
-# Tester la configuration
-pyantispam test-config
+cp config.yaml.example config.yaml   # réglages, commentés
+cp .env.example .env                 # mots de passe et clés, jamais commités
+pyantispam test-config               # vérifie la configuration et les connexions
 ```
 
-### 2. Configuration email (`config.yaml`)
+Points clés de `config.yaml` (tout est commenté dans `config.yaml.example`) :
 
 ```yaml
-# Comptes email
+llm:
+  provider: "mistral"              # mistral, openai ou anthropic (clé dans .env)
+  model: "mistral-medium-latest"
+
 email_accounts:
   - name: "personal"
-    server: "mail.example.com"
+    server: "imap.example.com"
     port: 993
-    username: "votre-email@example.com"
-    password_env: "EMAIL_PASSWORD_PERSONAL"  # Variable dans .env
-    use_ssl: true
+    username: "vous@example.com"
+    password_env: "EMAIL_PASSWORD_PERSONAL"
+    spam_folder: "Junk"            # optionnel, sinon actions.move_spam_to_folder
 
-# Paramètres de détection
 detection:
-  ml_confidence_threshold: 0.8    # Seuil ML (0.0-1.0) 0 incertain, 1 confiance absolue
-  use_llm_for_uncertain: true     # Utiliser LLM si ML incertain
-  classify_marketing_as_spam: true # Classify unsolicited marketing/newsletters as spam
-  marketing_confidence_threshold: 0.6  # Lower threshold for marketing classification
+  ml_confidence_threshold: 0.8
+  use_llm_for_uncertain: true
+  classify_marketing_as_spam: false
 
-# Configuration LLM
-llm:
-  provider: "openai"              # openai ou anthropic
-  openai_model: "gpt-5-nano"  # ou gpt-4.1-nano
-  anthropic_model: "claude-3-haiku-20240307"
+lists:
+  shadow: false                    # true : les listes sont seulement journalisées
 
-# Actions
+learning:
+  retrain_threshold: 10
+
 actions:
-  move_spam_to_folder: "SPAM_AUTO"  # Dossier de destination
-  auto_delete_after_days: 10        # Suppression auto des spams après X jours (0 = jamais)
-
-# Connexion IMAP
-email_connection:
-  request_delay: 0.1  # Délai entre requêtes IMAP en secondes (évite surcharge serveur)
-  timeout: 10         # Timeout connexion IMAP en secondes
+  auto_delete_after_days: 0        # purge du dossier spam (0 = jamais, conseillé)
 ```
 
-### 3. Variables d'environnement (`.env`)
+## Commandes
 
 ```bash
-# Mots de passe email
-EMAIL_PASSWORD_PERSONAL=votre-mot-de-passe
+pyantispam daemon                    # boucle continue (défaut : toutes les 300 s, --interval)
+pyantispam run                       # un passage : feedbacks puis nouveaux mails
+pyantispam run --account personal    # un seul compte
+pyantispam run --dry-run             # se connecte sans rien traiter (test de connexion)
+pyantispam test-config
+pyantispam setup                     # assistant de configuration
 
-# Clés API LLM (optionnel)
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-```
+pyantispam whitelist add|remove|list [adresse ou domaine]
+pyantispam blacklist add|remove|list [adresse ou domaine]
 
-### 4. Machine Learning
-
-Le système ML s'initialise automatiquement avec des exemples par défaut. Le modèle Random Forest analyse **79 features** réparties en plusieurs catégories :
-
-**🔍 Features d'historique sender (5)** - Apprentissage des patterns récurrents
-- `sender_spam_ratio` : ratio spam/total pour cet expéditeur (feature critique)
-- `sender_total_feedbacks` : nombre de feedbacks utilisateur
-- `sender_days_since_first` : ancienneté de l'expéditeur
-- `sender_is_recurring_spammer` : spam récurrent (≥3 feedbacks)
-- `sender_is_recurring_ham` : légitime récurrent (≥3 feedbacks)
-
-**⏰ Features temporelles (5)** - Patterns d'envoi suspects
-- `temporal_hour_of_day` : heure d'envoi (spam souvent la nuit)
-- `temporal_day_of_week` : jour de la semaine
-- `temporal_is_weekend` : envoyé le weekend
-- `temporal_is_night_time` : envoyé entre 22h et 6h
-- `temporal_is_business_hours` : heures de bureau (9h-17h)
-
-**📊 Features textuelles avancées (5)** - Analyse linguistique
-- `text_entropy` : densité d'information (spam = texte répétitif)
-- `text_unique_word_ratio` : richesse du vocabulaire
-- `text_avg_word_length` : longueur moyenne des mots
-- `text_lexical_diversity` : diversité lexicale
-- `text_repeated_words` : mots répétés >3 fois
-
-**🌐 Features de contenu riche (5)** - Analyse HTML et multimédia
-- `rich_html_to_text_ratio` : ratio HTML/texte
-- `rich_has_images` : présence d'images
-- `rich_has_forms` : formulaires (indicateur phishing)
-- `rich_has_scripts` : scripts JavaScript (suspicieux)
-- `rich_link_density` : densité de liens (liens/100 caractères)
-
-**🔗 Features d'interaction (5)** - Combinaisons de signaux
-- `interaction_marketing_newsletter` : marketing légitime
-- `interaction_suspicious_no_auth` : contenu suspicieux sans authentification
-- `interaction_urgency_money` : urgence + argent (spam classique)
-- `interaction_spammer_suspicious` : spammeur connu + contenu suspicieux
-- `interaction_shouting` : CAPS + multiples !!!
-
-**📝 Features classiques (54)** - Base de détection
-- **Structure** : longueur sujet/contenu, ratio majuscules, ponctuation
-- **Mots-clés spam** : urgence, argent, phishing, marketing, arnaques
-- **URLs & liens** : nombre, domaines suspects (.tk, .ml, .ga, etc.)
-- **Expéditeur** : domaine légitime, caractères spéciaux, longueur
-- **Contenu** : HTML, numéros de téléphone, adresses email
-- **Authentification** : SPF, DKIM, DMARC
-- **Newsletter** : tracking URLs, unsubscribe, images, CTA
-
-**⚖️ Sample Weighting** - Apprentissage intelligent
-Le système pondère les échantillons d'entraînement selon leur importance :
-- Échantillons par défaut : **poids 1.0**
-- Feedbacks utilisateur : **poids 3.0** (3x plus important)
-- Senders récurrents (≥3 feedbacks) : **poids 5.0** (5x plus important)
-- Senders avec historique (≥2 feedbacks) : **poids 1.5x**
-
-Cela permet au modèle d'apprendre **beaucoup plus rapidement** des patterns récurrents comme les newsletters quotidiennes.
-
-**Configuration ML avancée :**
-```yaml
-detection:
-  ml_confidence_threshold: 0.8    # Plus élevé = plus strict
-
-learning:
-  retrain_threshold: 10           # Ré-entraîner après N nouveaux exemples
-  auto_blacklist_threshold: 3     # Auto-blacklist après N feedbacks spam
-  auto_whitelist_threshold: 3     # Auto-whitelist après N feedbacks ham
-```
-
-## Utilisation
-
-### Commandes principales
-
-```bash
-# Scan unique
-pyantispam run
-
-# Mode daemon (continu)
-pyantispam daemon
-
-# Scan d'un compte spécifique
-pyantispam run --account personal
-
-# Mode dry-run (test)
-pyantispam run --dry-run
-```
-
-### Gestion des listes (Whitelist/Blacklist)
-
-```bash
-# Whitelist - Emails spécifiques
-pyantispam whitelist add important@company.com
-pyantispam whitelist add support@github.com
-
-# Whitelist - Domaines entiers
-pyantispam whitelist add company.com        # Tous les @company.com
-pyantispam whitelist add microsoft.com
-pyantispam whitelist add google.com
-
-# Blacklist - Domaines suspects
-pyantispam blacklist add suspicious-site.tk
-pyantispam blacklist add spam-domain.ml
-pyantispam blacklist add lottery-scam.ga
-
-# Gestion des listes
-pyantispam whitelist list                   # Voir whitelist
-pyantispam blacklist list                   # Voir blacklist
-pyantispam whitelist remove example.com     # Supprimer
-pyantispam blacklist remove badsite.com
-
-# Import/Export (sauvegarde)
-pyantispam whitelist export whitelist_backup.json
-pyantispam blacklist import blacklist.txt
-```
-
-### Pipeline de détection
-
-Le système traite les emails dans cet ordre :
-
-1. **🥇 Whitelist** → ✅ GARDER immédiatement (confiance: 1.0)
-2. **🥇 Blacklist** → ❌ SPAM immédiatement (confiance: 1.0)
-3. **🥈 Machine Learning** → Si confiance > seuil (0.8), décision finale
-4. **🥉 LLM** → Pour les cas incertains du ML
-5. **Défaut** → ✅ GARDER si tout incertain
-
-### Apprentissage par feedback
-
-Corrigez facilement les erreurs en déplaçant les emails vers des dossiers spéciaux :
-
-```bash
-# Votre client email crée automatiquement ces dossiers :
-INBOX.PYANTISPAM_WHITELIST   # → Ajoute expéditeur à whitelist + email dans INBOX
-INBOX.PYANTISPAM_BLACKLIST   # → Ajoute expéditeur à blacklist + email dans spam
-INBOX.PYANTISPAM_NOT_SPAM    # → Corrige ML (faux positif) + email dans INBOX
-INBOX.PYANTISPAM_IS_SPAM     # → Corrige ML (spam manqué) + email dans spam
-
-# Traitement automatique des corrections
-pyantispam run              # Traite aussi les feedbacks automatiquement
-```
-
-### Auto-blacklist/whitelist des expéditeurs récurrents
-
-Le système détecte automatiquement les expéditeurs que vous marquez répétitivement comme spam ou légitime :
-
-**Fonctionnement :**
-- Marquez un email de Batiweb comme spam → compteur à 1
-- Marquez un 2ème email de Batiweb comme spam → compteur à 2
-- Marquez un 3ème email de Batiweb comme spam → **🚫 AUTO-BLACKLIST !**
-- Tous les futurs emails de Batiweb seront bloqués automatiquement
-
-**Configuration (config.yaml) :**
-```yaml
-learning:
-  auto_blacklist_threshold: 3     # Auto-blacklist après 3 feedbacks spam
-  auto_whitelist_threshold: 3     # Auto-whitelist après 3 feedbacks ham
-```
-
-**Voir les expéditeurs récurrents :**
-```bash
-# Voir tous les expéditeurs avec feedbacks répétés
-pyantispam recurring-senders
-
-# Voir uniquement les spammeurs récurrents
-pyantispam recurring-senders --spam-only
-
-# Voir uniquement les expéditeurs légitimes
-pyantispam recurring-senders --ham-only
-
-# Seuil minimal de feedbacks (par défaut: 2)
-pyantispam recurring-senders --threshold 5
-
-# Limiter le nombre de résultats (par défaut: 20)
-pyantispam recurring-senders --limit 10
-```
-
-**Exemple de sortie :**
-```
-🔄 EXPÉDITEURS RÉCURRENTS DANS LES FEEDBACKS
-================================================================================
-
- 1. news@batiweb.com
-    📊 Spam: 5  |  Ham: 0  |  Total: 5
-    🚫 AUTO-BLACKLISTED
-    📅 Last seen: 2025-10-14 08:30 (0 days ago)
-
- 2. notifications@instagram.com
-    📊 Spam: 0  |  Ham: 4  |  Total: 4
-    ✅ AUTO-WHITELISTED
-    📅 Last seen: 2025-10-13 19:45 (1 days ago)
-
- 3. promo@marketing.com
-    📊 Spam: 2  |  Ham: 0  |  Total: 2
-    ⚠️  1 more spam feedback(s) until auto-blacklist
-    📅 Last seen: 2025-10-12 10:20 (2 days ago)
-```
-
-**Avantages :**
-- Plus besoin de marquer les mêmes spams chaque jour
-- Historique persistant des feedbacks par expéditeur
-- Détection intelligente des patterns (email vs domaine)
-- Sauvegarde immédiate des échantillons d'entraînement
-
-### Statistiques et monitoring
-
-```bash
-# Statistiques complètes
-pyantispam stats
-
-# Détails quotidiens
-pyantispam stats --daily
-pyantispam stats --daily --days 30
-
-# Export des statistiques
-pyantispam stats --export backup_stats.json
-
-# Statut des listes
 pyantispam status
+pyantispam stats [--daily --days 7] [--export fichier.json]
+pyantispam recurring-senders [--spam-only|--ham-only] [--threshold 2] [--limit 20]
 ```
 
-### Consultation des logs
+## Évaluation
 
-Les logs sont automatiquement écrits dans `data/logs/` avec rotation automatique :
+Ces scripts sont en lecture seule. Ils se lancent depuis le dossier qui contient `data/`, et ils ne touchent ni aux mails ni aux données.
+
+| Script | Rôle |
+|---|---|
+| `live_eval.py` | Mesure sur le trafic réel : votre reclassement fait foi, sinon la décision est tenue pour juste. Compare PyAntiSpam, Random Forest, CamemBERT, leur moyenne et le LLM. `--depuis "AAAA-MM-JJ HH:MM"` donne une série par tranches. |
+| `shadow_report.py` | Désaccords PyAntiSpam / CamemBERT, avec les verdicts relus à la main (`data/human_verdicts.json`). |
+| `split_eval.py` | Validation croisée groupée par domaine expéditeur sur `training_data.json` : paramètres d'en-tête contre contenu contre CamemBERT. |
+
+Limites de `live_eval.py` : les faux positifs sont bien mesurés, puisque vous les corrigez, mais les spams non vus dans la boîte de réception comptent comme justes.
+
+## Fichiers de données (`data/`)
+
+| Fichier | Contenu |
+|---|---|
+| `training_data.json` | Exemples étiquetés (vos reclassements) |
+| `backups/` | Copie quotidienne de `training_data.json`, gardée 7 jours (`scripts/backup_training.sh`, via cron) |
+| `spam_model.pkl`, `feature_scaler.pkl`, `feature_names.json` | Random Forest entraîné |
+| `retrain_state.json` | Compteur de reclassements depuis le dernier réentraînement |
+| `llm_cache.json` | Verdicts LLM et vos corrections, par empreinte de mail |
+| `whitelist.json`, `blacklist.json` | Listes |
+| `sender_feedback_history.json` | Corrections par expéditeur (listes automatiques) |
+| `spam_stats.json`, `processed_emails.json` | Statistiques (`pyantispam stats`) |
+| `human_verdicts.json` | Verdicts relus à la main, pour les rapports seulement |
+| `hf_cache/` | Modèle CamemBERT téléchargé |
+| `logs/` | Journaux, voir ci-dessous |
+
+## Journaux
 
 ```bash
-# Suivre les décisions spam en temps réel (recommandé pour daemon)
-tail -F data/logs/spam_decisions.log
-
-# Suivre tous les logs système (debug, erreurs)
-tail -F data/logs/pyantispam.log
-
-# Afficher les 100 dernières lignes
-tail -n 100 data/logs/spam_decisions.log
-
-# Rechercher des erreurs
+tail -F data/logs/spam_decisions.log    # décisions en direct
+tail -F data/logs/pyantispam.log        # tout le système
 grep ERROR data/logs/pyantispam.log
-
-# Rechercher les spams détectés
-grep "SPAM" data/logs/spam_decisions.log
-
-# Filtrer par compte email
 grep "\[account: personal\]" data/logs/spam_decisions.log
 ```
 
-**Types de logs** :
-- `data/logs/spam_decisions.log` : Décisions uniquement (spam/ham), format simple pour audit
-- `data/logs/pyantispam.log` : Tous les événements système avec noms de modules (debug complet)
-
-**Rotation automatique** :
-- Logs système : 10 MB par fichier, 5 fichiers conservés (50 MB total)
-- Logs décisions : 20 MB par fichier, 10 fichiers conservés (200 MB total)
+- `pyantispam.log` : tous les événements, rotation à 10 Mo, 5 fichiers gardés.
+- `spam_decisions.log` : décisions uniquement, rotation à 20 Mo, 10 fichiers gardés.
+- `*.jsonl` : journaux structurés pour l'évaluation (décisions et modes fantôme), avec un index `*_seen.json` qui évite les doublons.
 
 ## Architecture
 
 ```
-├── src/pyantispam/
-│   ├── config/          # ✅ Gestion configuration YAML + .env
-│   ├── email/           # ✅ Client IMAP robuste + traitement emails
-│   ├── filters/         # ✅ Whitelist/blacklist avec validation
-│   ├── ml/              # ✅ Random Forest + extraction features
-│   ├── llm/             # ✅ OpenAI GPT + Anthropic Claude
-│   ├── stats/           # ✅ Tracking et export des statistiques
-│   ├── learning/        # ✅ Apprentissage par feedback utilisateur
-│   └── cli.py           # ✅ Interface ligne de commande complète
-├── data/                # ✅ Listes + modèles ML persistants
-│   ├── whitelist.json   # ✅ Emails et domaines autorisés
-│   ├── blacklist.json   # ✅ Emails et domaines bloqués
-│   ├── spam_model.pkl   # ✅ Modèle ML entraîné
-│   ├── feature_scaler.pkl # ✅ Normalisation features
-│   ├── spam_stats.json  # ✅ Statistiques de détection et apprentissage
-│   ├── training_data.json # ✅ Données d'entraînement ML
-│   ├── sender_feedback_history.json # ✅ Historique feedbacks par expéditeur
-│   ├── llm_cache.json   # ✅ Cache persistant des classifications LLM
-│   └── logs/            # ✅ Logs rotatifs avec séparation système/décisions
-│       ├── pyantispam.log        # Tous les événements (debug complet)
-│       └── spam_decisions.log    # Décisions spam/ham uniquement
-├── config.yaml          # ✅ Configuration principale
-└── .env                 # ✅ Clés API et mots de passe
+src/pyantispam/
+├── cli.py               commandes, boucle du daemon
+├── config/              config.yaml + .env
+├── email/               client IMAP, chaîne de décision (email_processor.py)
+├── filters/             listes blanche / noire
+├── ml/                  extraction des paramètres, Random Forest, stockage atomique des exemples
+├── llm/                 Mistral / OpenAI / Anthropic
+├── learning/            dossiers de feedback, réentraînement
+├── embeddings/          CamemBERT en mode fantôme
+├── rspamd/              rspamd en mode fantôme
+└── stats/               statistiques
+docker/                  configuration rspamd et unbound
+scripts/                 sauvegarde de training_data.json
 ```
-
-### Pipeline de traitement
-
-```
-Email entrant
-    ↓
-┌─────────────────┐
-│   Whitelist?    │ → OUI → ✅ GARDER (confiance: 1.0)
-└─────────────────┘
-    ↓ NON
-┌─────────────────┐
-│   Blacklist?    │ → OUI → ❌ SPAM (confiance: 1.0)
-└─────────────────┘
-    ↓ NON
-┌─────────────────┐
-│ ML > seuil?     │ → OUI → ✅/❌ Décision ML
-└─────────────────┘
-    ↓ NON (incertain)
-┌─────────────────┐
-│ LLM activé?     │ → OUI → 🤖 Analyse LLM
-└─────────────────┘
-    ↓ NON
-✅ GARDER (par défaut)
-```
-
-## Référence des commandes
-
-### Commandes principales
-```bash
-# Traitement des emails
-pyantispam run                              # Scan une fois + traite feedbacks + nettoyage auto
-pyantispam run --dry-run                    # Test sans actions (pas de nettoyage)
-pyantispam run --account personal           # Compte spécifique
-pyantispam daemon                           # Mode continu avec nettoyage périodique
-
-# Statistiques et monitoring
-pyantispam stats                            # Statistiques complètes
-pyantispam stats --daily                    # Détails quotidiens
-pyantispam stats --export stats.json       # Export des données
-pyantispam status                           # État du système
-pyantispam recurring-senders                # Expéditeurs récurrents
-pyantispam recurring-senders --spam-only    # Spammeurs récurrents uniquement
-
-# Configuration
-pyantispam setup                            # Configuration initiale
-pyantispam test-config                      # Tester la configuration
-```
-
-### Gestion automatique des spams
-
-Le système effectue un **nettoyage automatique** des anciens spams à chaque exécution :
-
-```yaml
-# config.yaml
-actions:
-  move_spam_to_folder: "SPAM_AUTO"     # Dossier de destination des spams
-  auto_delete_after_days: 10           # Suppression automatique après 10 jours
-```
-
-**Comportements :**
-- `auto_delete_after_days: 10` → Supprime les spams > 10 jours du dossier spam
-- `auto_delete_after_days: 0` → Désactive le nettoyage automatique (conservation infinie)
-- Le nettoyage s'exécute **avant** le traitement des nouveaux emails
-- Affichage CLI : `🧹 Old spam deleted: X` si des emails sont supprimés
-
-### Gestion whitelist
-```bash
-pyantispam whitelist add email@domain.com   # Ajouter email
-pyantispam whitelist add domain.com         # Ajouter domaine
-pyantispam whitelist remove email@domain.com # Supprimer
-pyantispam whitelist list                   # Lister
-pyantispam whitelist clear --confirm        # Vider (dangereux)
-pyantispam whitelist export backup.json    # Exporter
-pyantispam whitelist import backup.json    # Importer
-```
-
-### Gestion blacklist
-```bash
-pyantispam blacklist add spam@bad.com       # Ajouter email
-pyantispam blacklist add suspicious.tk     # Ajouter domaine
-pyantispam blacklist remove spam@bad.com   # Supprimer
-pyantispam blacklist list                  # Lister
-pyantispam blacklist clear --confirm       # Vider (dangereux)
-pyantispam blacklist export backup.json   # Exporter
-pyantispam blacklist import backup.json   # Importer
-```
-
-### Statistiques détaillées
-```bash
-# Vue d'ensemble
-pyantispam stats                           # Toutes les statistiques
-
-# Détails temporels
-pyantispam stats --daily                   # Activité quotidienne (7 jours)
-pyantispam stats --daily --days 30         # Activité sur 30 jours
-
-# Export et sauvegarde
-pyantispam stats --export rapport.json     # Export complet
-pyantispam stats --export data/backup.json # Sauvegarde dans data/
-```
-
-### Informations trackées
-```bash
-# 🔍 Détection
-#   - Emails traités (total, spam, ham)
-#   - Méthodes utilisées (whitelist, ML, LLM)
-#   - Distribution de confiance
-#   - Taux de détection
-
-# 📚 Apprentissage
-#   - Feedback traité par type
-#   - Ajouts whitelist/blacklist
-#   - Échantillons ML collectés
-#   - Réentraînements effectués
-
-# ⚡ Performance
-#   - Temps de traitement moyen
-#   - Erreurs rencontrées
-#   - Efficacité par méthode
-#   - Historique quotidien
-```
-
-## Développement
-
-### ✅ Fonctionnalités implémentées
-- **Configuration YAML** : gestion centralisée avec validation
-- **Client IMAP robuste** : gestion erreurs, conventions serveurs
-- **Pipeline 3 niveaux** : listes → ML → LLM avec fallbacks
-- **ML Random Forest** : 79 features avec historique sender, sample weighting, auto-initialisation
-- **LLM multi-providers** : OpenAI + Anthropic avec prompts optimisés
-- **CLI complète** : toutes les opérations via ligne de commande
-- **Apprentissage continu** : auto-blacklist/whitelist, persistance immédiate, réentraînement intelligent
-
-### 🚧 Extensions possibles
-- **Interface web** : dashboard pour monitoring et configuration
-- **API REST** : intégration avec autres systèmes
-- **Modèles ML avancés** : BERT, transformers pour texte
-- **Règles personnalisées** : filtres utilisateur scriptables
-- **Notifications** : alertes sur détections importantes
-- **Métriques** : statistiques et performance des modèles

@@ -165,34 +165,22 @@ class MLClassifier:
         return np.array(vector)
 
     def _calculate_sample_weight(self, sample: Dict[str, Any], features: Dict[str, float]) -> float:
+        """Weight a training sample by its sender's feedback history.
+
+        Every stored sample is a user reclassification, so the base weight is 1.0;
+        senders the user has corrected repeatedly weigh more:
+        - 2 feedbacks: 1.5
+        - 3+ feedbacks or recurring spammer/ham: 5.0
         """
-        Calculate sample weight based on source and sender history.
-
-        Weight strategy:
-        - Default samples: 1.0 (baseline)
-        - User feedback: 3.0 (learn more from corrections)
-        - Recurring sender feedback: 5.0 (learn heavily from patterns)
-        """
-        base_weight = 1.0
-
-        # Check if this is user feedback
-        source = sample.get('source', 'default')
-        if source == 'user_feedback':
-            base_weight = 3.0
-
-        # Boost weight for recurring senders (strong pattern signal)
         sender_total_feedbacks = features.get('sender_total_feedbacks', 0)
         is_recurring = features.get('sender_is_recurring_spammer', 0) == 1.0 or \
                       features.get('sender_is_recurring_ham', 0) == 1.0
 
         if is_recurring or sender_total_feedbacks >= 3:
-            # This is a recurring sender with established pattern
             return 5.0
-        elif sender_total_feedbacks >= 2:
-            # Sender has some feedback history
-            return base_weight * 1.5
-
-        return base_weight
+        if sender_total_feedbacks >= 2:
+            return 1.5
+        return 1.0
 
     def train_with_samples(self, samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Train the model with provided samples"""

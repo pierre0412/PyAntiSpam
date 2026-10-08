@@ -1,200 +1,108 @@
-dis# 🐳 PyAntiSpam – Guide Docker complet
+# PyAntiSpam avec Docker
 
-Ce document explique comment construire, configurer et exécuter PyAntiSpam avec Docker et Docker Compose.
+Déploiement recommandé : une stack Docker Compose. PyAntiSpam y tourne en mode daemon, avec rspamd en mode fantôme.
 
-PyAntiSpam fonctionne en mode « daemon » dans le conteneur et lit sa configuration depuis `config.yaml` et des secrets via un fichier `.env`.
+## Services
 
----
+| Service | Image | Rôle |
+|---|---|---|
+| `pyantispam` | construite depuis le `Dockerfile` | Le daemon : `python -m pyantispam.cli daemon`, un cycle toutes les 300 s |
+| `rspamd` | `rspamd/rspamd:4.2.1` | Second avis en mode fantôme, apprend de vos reclassements (`rspamd.enabled`) |
+| `redis` | `redis:8.4-alpine` | Stockage rspamd (Bayes, cache) |
+| `unbound` | `klutchell/unbound` | Résolveur DNS récursif pour rspamd. Les listes DNS publiques refusent souvent les requêtes qui passent par de gros résolveurs ouverts. |
 
-## ✅ Prérequis
-- Docker 20+ installé et en fonctionnement
-- Optionnel mais recommandé: Docker Compose v2+
-- Accès Internet pour télécharger les images et dépendances
+Ils partagent tous le réseau `pyantispam-network`. Le contrôleur rspamd est publié sur le port `11334`.
 
----
+Limites de ressources de `pyantispam` : 2 Go de mémoire et 2 CPU. CamemBERT occupe à lui seul environ 1,4 Go en pointe.
 
-## 🧰 Contenu Docker dans ce dépôt
-- `Dockerfile` : image basée sur python:3.11-slim, exécution en utilisateur non-root, healthcheck, CMD daemon
-- `docker-compose.yml` : service unique `pyantispam` avec volumes, env_file, logs, limites de ressources
-- `scripts/docker-run.sh` : script helper pour construire/démarrer/stopper/consulter les logs sans Compose
+## Fichiers montés
 
-### ⏰ Fuseau horaire
-- Le fuseau horaire du conteneur est configuré par défaut sur `Europe/Paris` (installation de `tzdata` + variables d'environnement).
-- Avec Docker Compose, c'est défini via `environment: TZ=Europe/Paris` (déjà présent dans `docker-compose.yml`).
-- Avec `docker run`, le script ajoute automatiquement `-e TZ=Europe/Paris`.
-- Pour utiliser un autre fuseau, remplacez la valeur de `TZ` (ex: `TZ=UTC` ou `TZ=America/New_York`).
+| Hôte | Conteneur | |
+|---|---|---|
+| `./config.yaml` | `/app/config.yaml` | lecture seule |
+| `./.env` | `/app/.env` | lecture seule, chargé aussi comme `env_file` |
+| `./data/` | `/app/data` | tout l'état : modèles, exemples, listes, cache, journaux, cache CamemBERT (`hf_cache/`) |
+| `./docker/rspamd/local.d/` | `/etc/rspamd/local.d` | configuration rspamd, lecture seule |
+| `./docker/unbound/custom.conf.d/` | `/etc/unbound/custom.conf.d` | configuration unbound, lecture seule |
 
----
+Le code est **copié dans l'image**, il n'est pas monté. Tout changement de code demande donc une reconstruction.
 
-## 🗂️ Répertoires et fichiers persistants
-Les chemins côté hôte sont montés dans le conteneur pour conserver l'état:
-- `./config.yaml` → `/app/config.yaml` (lecture seule)
-- `./.env` → `/app/.env` (lecture seule)
-- `./data/` → `/app/data` (listes, modèles ML, cache LLM, logs rotatifs…)
+## Mise en place
 
-Créez ces éléments si besoin:
-
-```
-mkdir -p data
-cp config.yaml.example config.yaml   # si vous partez de zéro
-cp .env.example .env                 # si disponible, sinon créez .env
-```
-
-**Note** : Les logs sont maintenant stockés dans `data/logs/` avec rotation automatique. Le dossier est créé automatiquement au premier lancement.
-
----
-
-## 🔐 Configuration des secrets (.env)
-Le fichier `.env` n’est pas versionné. Il contient les clés API et mots de passe.
-Exemples (adaptez selon votre `config.yaml`):
-
-```
-# LLM
-OPENAI_API_KEY=sk-...            # si llm.provider=openai
-ANTHROPIC_API_KEY=...            # si llm.provider=anthropic
-
-# Mots de passe IMAP (doivent correspondre aux champs password_env de config.yaml)
-EMAIL_PASSWORD_PERSONAL=...
-EMAIL_PASSWORD_PRO=...
-EMAIL_PASSWORD_OTHER=...
-```
-
-Dans `config.yaml`, la clé `llm.api_key_env` indique quelle variable d’environnement sera lue dans le conteneur (ex: `OPENAI_API_KEY`). Les comptes e‑mail doivent définir `password_env` et la variable correspondante doit exister dans `.env`.
-
----
-
-## ⚙️ Configuration de l’application (config.yaml)
-- Copiez `config.yaml.example` vers `config.yaml`
-- Ajustez:
-  - `llm.provider` et `llm.model`
-  - `llm.cache.file_path`: par défaut `data/llm_cache.json` (persistant via le volume)
-  - `email_accounts`: serveurs IMAP, utilisateurs et `password_env`
-  - `actions` et `detection` selon votre politique
-
-Astuce: laissez `data/` et `logs/` montés pour conserver l’historique et les caches.
-
----
-
-## 🚀 Démarrage rapide (recommandé: Docker Compose)
-1) Construire et démarrer en arrière-plan:
-
-```
-docker compose up -d --build
-```
-
-2) Suivre les logs:
-```
-docker compose logs -f --tail=100
-```
-
-3) Arrêter:
-```
-docker compose stop
-```
-
-4) Mettre à jour (reconstruire):
-```
-docker compose build --no-cache && docker compose up -d
-```
-
-Note: selon votre installation, la commande peut être `docker-compose` au lieu de `docker compose`.
-
----
-
-## 🔁 Alternative: script helper
-Le script `scripts/docker-run.sh` gère la construction et l’exécution même sans Compose.
-
-Commandes principales:
-- `./scripts/docker-run.sh build`  → construit l’image locale `pyantispam:latest`
-- `./scripts/docker-run.sh start`  → construit si besoin et lance le conteneur
-- `./scripts/docker-run.sh logs`   → suit les logs
-- `./scripts/docker-run.sh stop`   → arrête le conteneur
-- `./scripts/docker-run.sh shell`  → ouvre un shell dans le conteneur
-- `./scripts/docker-run.sh stats`  → affiche les statistiques de PyAntiSpam
-
----
-
-## 🧪 Vérifier que tout fonctionne
-- Le conteneur expose un healthcheck interne; vous pouvez vérifier l'état avec:
-
-```
-docker ps
-```
-
-- Les logs sont stockés dans `./data/logs/` avec rotation automatique :
-  - `data/logs/spam_decisions.log` : Décisions spam/ham uniquement (audit)
-  - `data/logs/pyantispam.log` : Tous les événements système (debug complet)
-- Le cache LLM persistant est dans `./data/llm_cache.json` si activé dans `config.yaml`.
-
-**Consulter les logs** :
 ```bash
-# Suivre les décisions en temps réel
-tail -F data/logs/spam_decisions.log
+cp config.yaml.example config.yaml
+cp .env.example .env                       # mots de passe IMAP, clé LLM, RSPAMD_PASSWORD
+cp docker/rspamd/local.d/worker-controller.inc.example docker/rspamd/local.d/worker-controller.inc
+mkdir -p data
+docker compose up -d --build
 
-# Suivre les logs système
-tail -F data/logs/pyantispam.log
-
-# Depuis le conteneur
-docker compose exec pyantispam tail -f /app/data/logs/spam_decisions.log
+# mot de passe du contrôleur rspamd (le même que RSPAMD_PASSWORD dans .env) :
+docker compose exec rspamd rspamadm pw    # coller le hash dans worker-controller.inc
+docker compose restart rspamd
 ```
 
----
+`worker-controller.inc` contient un secret : il est ignoré par git, seul l'exemple est versionné.
 
-## 🧱 Réseau et ports
-- Un réseau `pyantispam-network` (bridge) est créé via docker-compose.
-- Le Dockerfile expose le port 8000 pour de futures API web, mais aucune interface web n’est publiée par défaut. Si vous ajoutez une API, mappez le port:
+## Exploitation
 
-```
-# Exemple (à adapter dans docker-compose.yml)
-ports:
-  - "8000:8000"
-```
-
----
-
-## 📦 Sauvegardes et persistance
-Sauvegardez régulièrement `data/` (qui inclut désormais les logs). Exemple de backup simple:
-
-```
-tar czf backup-$(date +%F).tar.gz data config.yaml
+```bash
+docker compose ps                                     # état (pyantispam et rspamd ont un healthcheck)
+docker compose logs -f --tail=100 pyantispam
+tail -F data/logs/spam_decisions.log                  # décisions en direct, depuis l'hôte
+docker compose exec pyantispam pyantispam stats       # une commande dans le conteneur
 ```
 
-**Note** : Les logs sont dans `data/logs/` avec rotation automatique (pas besoin de dossier `logs/` séparé).
+### Déployer un changement de code
 
----
+```bash
+git pull
+docker compose build pyantispam
+docker compose up -d pyantispam
+```
 
-## 🔒 Sécurité et bonnes pratiques
-- L’image s’exécute en utilisateur non‑root pour limiter l’impact d’un incident.
-- Montez `config.yaml` et `.env` en lecture seule comme déjà prévu.
-- Restreignez les droits sur `.env` (chiffrement/permissions strictes).
-- Si vous utilisez des fournisseurs LLM, surveillez vos quotas et la confidentialité.
+Seul `pyantispam` redémarre. rspamd, redis et unbound ne sont pas touchés.
 
----
+### Changer `config.yaml`
 
-## 🛠️ Dépannage
-- Le conteneur s’arrête immédiatement:
-  - Vérifiez la validité de `config.yaml` et la présence des variables `.env` requises.
-  - Consulter `docker compose logs` pour l’erreur détaillée.
-- Erreurs d'IMAP (SSL, déconnexion, timeout):
-  - Ajustez `email_connection.request_delay` dans `config.yaml` (ex: 0.1 s) pour réduire la charge.
-  - Augmentez `email_connection.timeout` (ex: 30 s) pour les serveurs lents.
-  - Vérifiez les ports/SSL de vos serveurs IMAP.
-- LLM indisponible / temps de réponse long:
-  - Activez le cache (`llm.cache.enabled: true`) et assurez un volume persistant sur `data/`.
-- Problèmes de permissions sur volumes:
-  - Assurez-vous que votre utilisateur hôte possède les dossiers `data/` et `logs/`.
+`config.yaml` est monté seul. Un éditeur qui remplace le fichier, comme `sed -i`, n'est pas vu par le conteneur en marche. Il faut recréer le conteneur :
 
----
+```bash
+docker compose up -d --force-recreate pyantispam
+docker exec pyantispam grep -n "la_clé" /app/config.yaml     # vérifier la valeur lue
+```
 
-## ❓ FAQ
-- Où placer `config.yaml` ?
-  - À la racine du projet, monté en `/app/config.yaml` dans le conteneur via Compose.
-- Puis-je utiliser un autre provider LLM ?
-  - Oui, mettez `llm.provider` à `anthropic` ou `ollama` et ajustez `api_key_env` et/ou la configuration du provider.
-- Comment lancer temporairement en mode interactif ?
-  - `docker compose run --rm pyantispam bash` puis exécutez des commandes Python.
+## Utilisateur du conteneur
 
----
+Le compose lance `pyantispam` sous `user: "${UID}:${GID}"`. Si ces variables ne sont pas définies au moment de `docker compose`, le conteneur tourne en **root**, et les fichiers qu'il crée dans `data/` (dont `data/logs/`) appartiennent à root. Docker affiche alors l'avertissement `The "UID" variable is not set`.
 
-## 📄 Licence
-Ce guide accompagne PyAntiSpam. Reportez‑vous au fichier LICENSE du projet pour les conditions.
+Pour tourner sous votre utilisateur, ajoutez dans `.env` (le compose y lit ses variables) :
+
+```bash
+UID=1000      # résultat de: id -u
+GID=1000      # résultat de: id -g
+```
+
+Puis remettez `data/` à votre nom (`sudo chown -R $(id -u):$(id -g) data`) avant de recréer le conteneur.
+
+## Sauvegarde
+
+`training_data.json` contient tous vos reclassements : c'est la donnée à ne pas perdre. `scripts/backup_training.sh` en garde une copie validée par jour dans `data/backups/`, avec 7 jours de rotation. Exemple de ligne cron sur l'hôte :
+
+```
+30 3 * * * cd /chemin/vers/PyAntiSpam && ./scripts/backup_training.sh >> data/backups/backup_training.log 2>&1
+```
+
+Le journal va dans `data/backups/` et non dans `data/logs/`. Si le conteneur tourne en root, `data/logs/` lui appartient, et cron ne peut pas y écrire.
+
+Les copies restent sur la même machine. Pour une vraie sauvegarde, copiez aussi `data/` ailleurs.
+
+## Fuseau horaire
+
+`TZ=Europe/Paris` est défini dans l'image et dans le compose. Changez `TZ` pour un autre fuseau.
+
+## Dépannage
+
+- **Le conteneur redémarre en boucle** : vérifier `config.yaml` (`docker compose exec pyantispam pyantispam test-config`) et les variables de `.env`.
+- **Délais IMAP** (`The read operation timed out`) : souvent passagers, le cycle suivant reprend. S'ils sont fréquents, augmentez `email_connection.timeout`.
+- **rspamd désactivé au démarrage** : `RSPAMD_PASSWORD` manque dans `.env`.
+- **Mémoire** : le premier score CamemBERT charge le modèle (environ 750 Mo, puis 1,4 Go en pointe). Avec `embeddings.enabled: false`, le daemon reste léger.
