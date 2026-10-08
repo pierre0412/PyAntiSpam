@@ -3,7 +3,6 @@
 import click
 import logging
 from logging.handlers import RotatingFileHandler
-import sys
 from pathlib import Path
 from typing import Optional
 
@@ -204,7 +203,7 @@ def run(ctx, account: Optional[str], folder: str, dry_run: bool):
                 feedback_results = processor.process_feedback()
                 if feedback_results['total_feedback'] > 0:
                     click.echo(f"   ✅ Processed {feedback_results['total_feedback']} feedback emails")
-                    click.echo(f"   📝 Learning updates applied")
+                    click.echo("   📝 Learning updates applied")
 
             for acc in accounts:
                 click.echo(f"\n📬 Processing account: {acc}")
@@ -636,7 +635,6 @@ def recurring_senders(ctx, spam_only: bool, ham_only: bool, threshold: int, limi
                 click.echo(f"    ℹ️  {remaining} more ham feedback(s) until auto-whitelist")
 
             # Show dates
-            from datetime import datetime
             last_seen_dt = datetime.fromtimestamp(sender['last_seen'])
             days_ago = (datetime.now() - last_seen_dt).days
             click.echo(f"    📅 Last seen: {last_seen_dt.strftime('%Y-%m-%d %H:%M')} ({days_ago} days ago)")
@@ -651,7 +649,7 @@ def recurring_senders(ctx, spam_only: bool, ham_only: bool, threshold: int, limi
         auto_blacklisted = sum(1 for s in senders_data if s['spam'] >= auto_bl_threshold)
         auto_whitelisted = sum(1 for s in senders_data if s['ham'] >= auto_wl_threshold)
 
-        click.echo(f"\n📈 SUMMARY:")
+        click.echo("\n📈 SUMMARY:")
         click.echo(f"   Spam senders: {total_spam_senders}")
         click.echo(f"   Ham senders: {total_ham_senders}")
         click.echo(f"   Auto-blacklisted: {auto_blacklisted}")

@@ -11,3 +11,4 @@ reproduce_error.py
 test_*.py
 samples/
 docker/rspamd/local.d/worker-controller.inc
+*.egg-info/

@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, TYPE_CHECKING
 import json
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ except ImportError:
 
 
 class LLMClassifier:
-    """LLM-based spam classifier supporting OpenAI and Anthropic models"""
+    """LLM-based spam classifier (Mistral, OpenAI or Anthropic)"""
 
     def __init__(self, config: "ConfigManager"):
         self.config = config
@@ -35,6 +35,7 @@ class LLMClassifier:
         # Initialize clients
         self.openai_client = None
         self.anthropic_client = None
+        self.mistral_client = None
 
         self._initialize_clients()
 
@@ -93,7 +94,7 @@ class LLMClassifier:
             return self._classify_with_anthropic(email_text, email_data)
         elif provider == "openai" and self.openai_client:
             return self._classify_with_openai(email_text, email_data)
-        elif provider == "MistralAI" and self.mistral_client:
+        elif provider in ("mistral", "mistralai") and self.mistral_client:
             return self._classify_with_mistralai(email_text, email_data)
         else:
             # Fallback to any available client
@@ -473,7 +474,3 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 "confidence": 0.5,
                 "method": "llm_mistralai_error"
             }
-
-    def is_available(self) -> bool:
-        """Check if LLM classification is available"""
-        return self.openai_client is not None or self.anthropic_client is not None or self.mistral_client is not None

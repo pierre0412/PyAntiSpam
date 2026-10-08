@@ -4,8 +4,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from collections import defaultdict
+from typing import Dict, Any
 
 
 class StatsManager:
@@ -377,40 +376,3 @@ class StatsManager:
         except Exception as e:
             self.logger.error(f"Error exporting stats: {e}")
             raise
-
-    def reset_stats(self, confirm: bool = False):
-        """Reset all statistics (requires confirmation)"""
-        if not confirm:
-            raise ValueError("Reset operation requires explicit confirmation")
-
-        # Keep the structure but reset values
-        self.stats["detection"]["total_emails_processed"] = 0
-        self.stats["detection"]["spam_detected"] = 0
-        self.stats["detection"]["ham_detected"] = 0
-        for method in self.stats["detection"]["detection_methods"]:
-            self.stats["detection"]["detection_methods"][method] = 0
-        for level in self.stats["detection"]["confidence_distribution"]:
-            self.stats["detection"]["confidence_distribution"][level] = 0
-
-        self.stats["learning"]["total_feedback"] = 0
-        self.stats["learning"]["whitelist_additions"] = 0
-        self.stats["learning"]["blacklist_additions"] = 0
-        self.stats["learning"]["ml_training_samples"] = 0
-        self.stats["learning"]["ml_retraining_count"] = 0
-        self.stats["learning"]["last_retrain_date"] = None
-        for feedback_type in self.stats["learning"]["feedback_by_type"]:
-            self.stats["learning"]["feedback_by_type"][feedback_type] = 0
-
-        self.stats["performance"]["processing_times"] = []
-        self.stats["performance"]["avg_processing_time"] = 0.0
-        self.stats["performance"]["errors_count"] = 0
-        self.stats["performance"]["last_error_date"] = None
-
-        self.stats["daily_stats"] = {}
-
-        # Also reset processed emails tracking
-        self.processed_emails = set()
-        self._save_processed_emails()
-
-        self._save_stats()
-        self.logger.warning("All statistics have been reset")

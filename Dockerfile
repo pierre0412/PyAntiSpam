@@ -25,7 +25,6 @@ WORKDIR /app
 # Copier les fichiers de projet essentiels et le code source avant installation
 COPY pyproject.toml requirements.txt ./
 COPY src/ ./src/
-COPY force_retrain.py force_retrain_real.py ./
 
 # Installer les dépendances Python et le paquet.
 # torch depuis l'index CPU : la version par défaut tire des paquets CUDA de plusieurs Go.
@@ -38,7 +37,7 @@ RUN pip install --no-cache-dir --upgrade pip && \
 ENV HF_HOME=/app/data/hf_cache
 
 # Créer les répertoires de données avec bonnes permissions
-RUN mkdir -p /app/data /app/logs /app/config && \
+RUN mkdir -p /app/data && \
     chown -R pyantispam:pyantispam /app
 
 # Basculer vers utilisateur non-root

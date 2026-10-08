@@ -1,19 +1,18 @@
 # PyAntiSpam Configuration Example
-# Copy to config.yaml and customize
+# Copy to config.yaml and customize. Secrets go in .env, never here.
 
-# LLM Configuration
+# LLM used for uncertain cases (RF below ml_confidence_threshold).
+# The API key is read from the matching environment variable:
+# MISTRAL_API_KEY, OPENAI_API_KEY or ANTHROPIC_API_KEY.
 llm:
-  provider: "openai"  # openai, anthropic, mistral
-  model: "gpt-4o-mini"  # Model name (unified field)
-  api_key_env: "OPENAI_API_KEY"  # Environment variable name
-  # For Anthropic: model: "claude-3-haiku-20240307", api_key_env: "ANTHROPIC_API_KEY"
-  # For Mistral: model: "mistral-medium-latest", api_key_env: "MISTRAL_API_KEY"
-  
-  # LLM Cache Settings
+  provider: "mistral"              # mistral, openai, anthropic
+  model: "mistral-medium-latest"   # e.g. "gpt-4o-mini" (openai), "claude-3-haiku-20240307" (anthropic)
+
+  # Cache of LLM verdicts and of user feedback overrides (data/llm_cache.json)
   cache:
-    enabled: true                    # Enable persistent LLM cache
-    file_path: "data/llm_cache.json" # Path to cache file
-    max_age_days: 30                # Auto-delete cache entries older than N days (0 = never)
+    enabled: true
+    file_path: "data/llm_cache.json"
+    max_age_days: 30               # Ignore entries older than N days (0 = never)
 
 # Email Accounts Configuration
 email_accounts:
@@ -23,6 +22,7 @@ email_accounts:
     username: "your-email@gmail.com"
     password_env: "EMAIL_PASSWORD_PERSONAL"
     use_ssl: true
+    # spam_folder: "Junk"          # Account-specific spam folder (default: actions.move_spam_to_folder)
 
   # - name: "work"
   #   server: "outlook.office365.com"
@@ -30,77 +30,67 @@ email_accounts:
   #   username: "your-work@company.com"
   #   password_env: "EMAIL_PASSWORD_WORK"
   #   use_ssl: true
-  #   spam_folder: spam #to define account specific spam folder
 
 # Spam Detection Settings
 detection:
-  ml_confidence_threshold: 0.8     # Threshold for ML model certainty
-  use_llm_for_uncertain: true      # Use LLM for uncertain cases
-  classify_marketing_as_spam: true # Classify unsolicited marketing/newsletters as spam
-  marketing_confidence_threshold: 0.6  # Lower threshold for marketing classification
+  ml_confidence_threshold: 0.8     # RF decides alone above this confidence, else the LLM is asked
+  use_llm_for_uncertain: true      # false: uncertain emails are kept
+  classify_marketing_as_spam: false     # Hand-written marketing rule (fixed weights, never learned).
+  marketing_confidence_threshold: 0.6   # Disabled by default: it misfiled supplier mails as spam.
 
-# Learning and Retraining Settings (IMPLEMENTED)
+# Whitelist / blacklist (data/whitelist.json, data/blacklist.json)
+lists:
+  shadow: false                    # true: list verdicts are only logged, the models decide.
+                                   # Useful while the models learn: list hits otherwise hide
+                                   # their mistakes from the user's corrections.
+
+# Learning: the models learn only from the user's reclassifications (feedback folders).
 learning:
-  retrain_threshold: 10            # Retrain ML model after N new feedback samples
-  # 5 trés réactif réentraine souvent
-  # 10 équilibré réglage par défaut
-  # 20 conservateur, plus stable, production, évite surapprentissage
-  # 50 trés stable, réentraine rarement, serveur stable, peu de feedback
+  retrain_threshold: 10            # Retrain the RF on the full history after N reclassifications
+  auto_blacklist_threshold: 3      # Add sender to blacklist after N "is spam" reclassifications
+  auto_whitelist_threshold: 3      # Add sender to whitelist after N "not spam" reclassifications
 
-  # Auto-blacklist/whitelist settings for recurring senders
-  auto_blacklist_threshold: 3      # Auto-blacklist sender after N spam feedbacks
-  auto_whitelist_threshold: 3      # Auto-whitelist sender after N ham feedbacks
-  # When you mark emails from the same sender as spam/ham multiple times,
-  # the sender will be automatically added to blacklist/whitelist.
-  # This helps with recurring spam (e.g., daily newsletters you don't want).
-
-# Note: The following folders are HARDCODED in the program:
-# - PYANTISPAM_IS_SPAM      (move false negatives here - emails that should be spam)
-# - PYANTISPAM_NOT_SPAM     (move false positives here - emails that are NOT spam)
-# - PYANTISPAM_WHITELIST    (auto-whitelist senders)
-# - PYANTISPAM_BLACKLIST    (auto-blacklist senders)
+# Feedback folders (fixed names, created automatically in each account):
+# - PYANTISPAM_IS_SPAM      a spam that was kept: learned as spam, moved to the spam folder
+# - PYANTISPAM_NOT_SPAM     a legitimate mail filed as spam: learned as ham, moved back to INBOX
+# - PYANTISPAM_WHITELIST    adds the sender to the whitelist, moved to INBOX
+# - PYANTISPAM_BLACKLIST    adds the sender to the blacklist, moved to the spam folder
 
 # Action Settings
 actions:
-  move_spam_to_folder: "SPAM_AUTO"  # Folder name to move spam
-  auto_delete_after_days: 10        # Auto-delete spam after N days (0 = never)
+  move_spam_to_folder: "SPAM_AUTO" # Default spam folder (per account: spam_folder)
+  auto_delete_after_days: 0        # Delete spam older than N days (0 = never, recommended)
 
 # Email Connection Settings
 email_connection:
-  request_delay: 0.1  # Delay between IMAP requests in seconds (prevents server overload)
-  timeout: 10         # IMAP connection timeout in seconds
+  request_delay: 0.1               # Delay between IMAP requests in seconds
+  timeout: 10                      # IMAP timeout in seconds
 
-# Embedding shadow mode : a sentence-embedding model scores each email, logged
-# next to the real decision, never acting on it.
+# Shadow mode ("mode fantôme"): scored and logged next to the real decision,
+# never acting on the mail. See shadow_report.py and live_eval.py.
 embeddings:
   enabled: false
   model: "dangvantuan/sentence-camembert-base"
 
-# rspamd shadow mode ("mode fantôme") : rspamd scores every email exactly
-# like production would, but the verdict is only logged - never acts on
-# the mail. Used to accumulate calibration data before trusting rspamd
-# enough to actually combine it into the real decision.
 rspamd:
-  enabled: false              # Off by default - opt in explicitly
-  url: "http://rspamd:11334"  # Docker service name when deployed via docker-compose.yml
+  enabled: false
+  url: "http://rspamd:11334"       # Docker service name (docker-compose.yml)
   password_env: "RSPAMD_PASSWORD"
-  timeout: 10                 # seconds; a slow/down rspamd must never block mail processing
+  timeout: 10                      # Seconds; a slow rspamd never blocks mail processing
 
 logging:
-  level: "INFO"  # Niveau général : DEBUG, INFO, WARNING, ERROR
-
-# Logs système (tous les événements)
+  # System log (all events)
   system:
     enabled: true
     file_path: "data/logs/pyantispam.log"
-    max_size_mb: 10        # Taille max par fichier en mb
-    backup_count: 5        # Nombre de fichiers à garder en jours
-    console_level: "INFO"  # Niveau pour la console
-    file_level: "DEBUG"    # Niveau pour le fichier
+    max_size_mb: 10                # Rotate at this size
+    backup_count: 5                # Number of rotated files kept
+    console_level: "INFO"
+    file_level: "DEBUG"
 
-  # Logs décisions spam
+  # Spam decisions only
   decisions:
     enabled: true
     file_path: "data/logs/spam_decisions.log"
-    max_size_mb: 20        # en mb
-    backup_count: 10       # en jours
+    max_size_mb: 20
+    backup_count: 10

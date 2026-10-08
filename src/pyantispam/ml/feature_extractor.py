@@ -4,7 +4,7 @@ import re
 import logging
 import time
 import math
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from collections import Counter
 from pathlib import Path
 import json
@@ -527,7 +527,6 @@ class FeatureExtractor:
         html_pattern = r'<[^>]+>'
         html_tags = re.findall(html_pattern, content)
         html_length = sum(len(tag) for tag in html_tags)
-        text_length = len(content) - html_length
         features['rich_html_to_text_ratio'] = html_length / len(content) if len(content) > 0 else 0.0
 
         # Image tags

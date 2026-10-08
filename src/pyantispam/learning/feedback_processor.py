@@ -1,14 +1,14 @@
 """User feedback processing for continuous learning"""
 
+import hashlib
 import logging
-from typing import Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import json
 import time
 from pathlib import Path
 from ..email.email_client import EmailClient
 from ..filters import ListManager
 from ..ml import MLClassifier
-from ..ml.training_store import load_samples, read_samples_readonly, write_samples_atomic
 from ..rspamd import RspamdShadowClassifier
 from ..stats.stats_manager import StatsManager
 
@@ -38,9 +38,6 @@ class FeedbackProcessor:
         self.ml_classifier = MLClassifier(config)
         self.rspamd_shadow = RspamdShadowClassifier(config)
         self.stats_manager = StatsManager()
-
-        # Training samples for ML retraining
-        self.training_samples = []
 
         # LLM cache reference (shared with EmailProcessor for immediate updates)
         self.llm_cache = llm_cache if llm_cache is not None else {}
@@ -129,7 +126,6 @@ class FeedbackProcessor:
     def _compute_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
         """Compute a fingerprint matching EmailProcessor logic for overrides"""
         content = f"{email_data.get('sender_email', '')}{email_data.get('subject', '')}{email_data.get('body', '')[:200]}"
-        import hashlib
         return hashlib.md5(content.encode('utf-8')).hexdigest()
 
     def _update_llm_cache_override(self, email_data: Dict[str, Any], is_spam: bool, reason: str):
@@ -306,7 +302,6 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": False
                 }
-                self.training_samples.append(training_sample)
                 # Persist immediately to disk
                 self._persist_training_sample(training_sample)
                 result["ml_sample"] = True
@@ -331,7 +326,6 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": True
                 }
-                self.training_samples.append(training_sample)
                 # Persist immediately to disk
                 self._persist_training_sample(training_sample)
                 result["ml_sample"] = True
@@ -343,7 +337,6 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": False
                 }
-                self.training_samples.append(training_sample)
                 # Persist immediately to disk
                 self._persist_training_sample(training_sample)
 
@@ -372,7 +365,6 @@ class FeedbackProcessor:
                     "email_data": email_data,
                     "is_spam": True
                 }
-                self.training_samples.append(training_sample)
                 # Persist immediately to disk
                 self._persist_training_sample(training_sample)
 
@@ -472,16 +464,14 @@ class FeedbackProcessor:
     def _retrain_ml_model(self):
         """Retrain on the full stored history, never on just the current batch."""
         try:
-            samples = read_samples_readonly(Path("data/training_data.json"))
-            if not samples:
-                return {"success": False, "error": "no training data readable"}
-            self.logger.warning(f"🎓 DÉCLENCHEMENT RÉENTRAÎNEMENT ML sur {len(samples)} échantillons (historique complet)")
-
-            result = self.ml_classifier.train_with_samples(samples)
+            self.logger.warning("🎓 DÉCLENCHEMENT RÉENTRAÎNEMENT ML (historique complet)")
+            result = self.ml_classifier.retrain_from_history()
 
             if result["success"]:
                 accuracy = result.get('accuracy', 0)
-                self.logger.warning(f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès ! Nouvelle précision: {accuracy:.3f}")
+                self.logger.warning(
+                    f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès sur {result.get('samples_count')} échantillons ! "
+                    f"Nouvelle précision: {accuracy:.3f}")
                 return result
             else:
                 error = result.get('error', 'unknown')
@@ -508,10 +498,6 @@ class FeedbackProcessor:
                 results[folder_name] = False
 
         return results
-
-    def get_feedback_folder_names(self) -> Dict[str, str]:
-        """Get normalized feedback folder names for display"""
-        return self.feedback_folders.copy()
 
     def _load_sender_history(self) -> Dict[str, Dict[str, Any]]:
         """Load sender feedback history from disk"""

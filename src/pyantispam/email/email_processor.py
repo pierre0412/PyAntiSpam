@@ -3,7 +3,6 @@
 import logging
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Optional
@@ -34,10 +33,8 @@ class EmailProcessor:
         self.list_manager = ListManager()
         self.feedback_processor = None  # Lazy loading to avoid circular import
         self.stats_manager = StatsManager()
-        self.llm_training_samples = []  # Collect LLM results for ML training
         self.processed_emails_cache = {}  # Cache for processed email fingerprints
-        self.processed_training_fingerprints = set()  # Track emails already used for training
-        
+
         # Load persistent LLM cache
         self._load_cache()
 
@@ -169,7 +166,6 @@ class EmailProcessor:
                     )
 
                     # Process email through spam detection pipeline
-                    import time
                     start_time = time.time()
                     decision = self._process_single_email(email_data)
                     decision["shadow_list"] = self._last_list_verdict
@@ -307,40 +303,6 @@ class EmailProcessor:
 
         return all_results
 
-    def setup_feedback_folders(self, account_name: str = None) -> Dict[str, Any]:
-        """Create feedback folders for learning"""
-        if account_name and account_name not in self.clients:
-            raise ValueError(f"Account {account_name} not initialized")
-
-        accounts_to_setup = [account_name] if account_name else list(self.clients.keys())
-        results = {
-            "accounts_setup": 0,
-            "folders_created": {},
-            "errors": 0
-        }
-
-        for account in accounts_to_setup:
-            try:
-                client = self.clients[account]
-                feedback_processor = self._get_feedback_processor()
-                folder_results = feedback_processor.create_feedback_folders(client)
-
-                results["accounts_setup"] += 1
-                results["folders_created"][account] = folder_results
-
-                # Log folder names for user reference
-                folder_names = feedback_processor.get_feedback_folder_names()
-                self.logger.info(f"[account: {account}] Feedback folders for {account}:")
-                for purpose, folder in folder_names.items():
-                    normalized = client._normalize_folder_name(folder)
-                    self.logger.info(f"[account: {account}]   {purpose}: {normalized}")
-
-            except Exception as e:
-                self.logger.error(f"Error setting up feedback folders for {account}: {e}")
-                results["errors"] += 1
-
-        return results
-
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics"""
         return self.stats_manager.get_summary_stats()
@@ -356,10 +318,6 @@ class EmailProcessor:
     def export_statistics(self, file_path: str):
         """Export statistics to file"""
         self.stats_manager.export_stats(file_path)
-
-    def reset_statistics(self, confirm: bool = False):
-        """Reset all statistics"""
-        self.stats_manager.reset_stats(confirm)
 
     def _process_single_email(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Process single email through spam detection pipeline"""
@@ -399,7 +357,7 @@ class EmailProcessor:
                 self.logger.debug(f"Using user feedback override for email fingerprint: {email_fingerprint[:8]}...")
                 return cached_result
 
-        # Step 3: ML-based detection (placeholder)
+        # Step 3: ML-based detection
         ml_result = self._ml_classify(email_data)
         if ml_result["confidence"] > self.config.get("detection.ml_confidence_threshold", 0.8):
             return ml_result
@@ -411,24 +369,14 @@ class EmailProcessor:
                 cached_result = self.processed_emails_cache[email_fingerprint].copy()
                 cached_result["reason"] += " (cached)"
                 self.logger.debug(f"Using cached LLM result for email fingerprint: {email_fingerprint[:8]}...")
-                
-                # Collect cached LLM result as training data for ML model
-                self._collect_llm_training_sample(email_data, cached_result)
-                
                 return cached_result
-            
-            # Get LLM classification for new email
+
+            # Get LLM classification for new email, cached for future cycles.
+            # LLM verdicts are never used for training: the models learn only
+            # from the user's own reclassifications (feedback folders).
             llm_result = self._llm_classify(email_data)
-            
-            # Cache the result for future use
             self.processed_emails_cache[email_fingerprint] = llm_result.copy()
-            
-            # Save cache to disk
             self._save_cache()
-            
-            # Collect LLM result as training data for ML model
-            self._collect_llm_training_sample(email_data, llm_result)
-            
             return llm_result
 
         # Default: keep email if uncertain
@@ -550,56 +498,6 @@ class EmailProcessor:
             self.ml_classifier.persist_sample(sample)
         except Exception as e:
             self.logger.warning(f"Could not persist confirmed training sample (non-blocking): {e}")
-
-    def _collect_llm_training_sample(self, email_data: Dict[str, Any], llm_result: Dict[str, Any]):
-        """Collect LLM classification result as training data for ML model"""
-        try:
-            # Only collect high-confidence LLM results
-            if llm_result.get("confidence", 0) >= 0.7:
-                # Check if we've already collected a training sample for this email
-                email_fingerprint = self._get_email_fingerprint(email_data)
-                if email_fingerprint in self.processed_training_fingerprints:
-                    return  # Skip duplicate training sample
-                
-                is_spam = llm_result.get("action") == "SPAM"
-                
-                # Create training sample in the format expected by MLClassifier
-                training_sample = {
-                    "email_data": email_data.copy(),
-                    "is_spam": is_spam
-                }
-                
-                self.llm_training_samples.append(training_sample)
-                self.processed_training_fingerprints.add(email_fingerprint)
-                self.logger.debug(f"Collected LLM training sample: spam={is_spam}, confidence={llm_result.get('confidence', 0):.2f}")
-                
-                # Retrain ML model periodically when we have enough samples
-                if len(self.llm_training_samples) >= 10:
-                    self._retrain_ml_with_llm_samples()
-                    
-        except Exception as e:
-            self.logger.error(f"Error collecting LLM training sample: {e}")
-
-    def _retrain_ml_with_llm_samples(self):
-        """Retrain ML model with collected LLM samples"""
-        try:
-            self.logger.warning(f"🤖 DÉCLENCHEMENT RÉENTRAÎNEMENT ML avec {len(self.llm_training_samples)} échantillons LLM")
-
-            result = self.ml_classifier.train_with_samples(self.llm_training_samples)
-
-            if result["success"]:
-                accuracy = result.get('accuracy', 0)
-                self.logger.warning(f"✅ RÉENTRAÎNEMENT ML TERMINÉ avec succès ! Nouvelle précision: {accuracy:.3f}")
-                # Record retraining stats
-                self.stats_manager.record_ml_retrain(result)
-                # Clear samples after successful training
-                self.llm_training_samples.clear()
-            else:
-                error = result.get('error', 'unknown')
-                self.logger.error(f"❌ ÉCHEC du réentraînement ML avec échantillons LLM: {error}")
-
-        except Exception as e:
-            self.logger.error(f"❌ ERREUR durant le réentraînement ML avec échantillons LLM: {e}")
 
     def _handle_spam_email(self, client: EmailClient, email_id: str, email_data: Dict[str, Any], decision: Dict[str, Any], account_config: Dict[str, Any] = None) -> bool:
         """Handle detected spam email according to configuration"""

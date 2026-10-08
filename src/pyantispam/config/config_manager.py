@@ -68,21 +68,6 @@ class ConfigManager:
 
         return accounts
 
-    def get_llm_config(self) -> Dict[str, Any]:
-        """Get LLM configuration with API key from environment"""
-        llm_config = self.get('llm', {})
-
-        if 'api_key_env' in llm_config:
-            env_var = llm_config['api_key_env']
-            api_key = os.getenv(env_var)
-            if not api_key:
-                raise ValueError(
-                    f"Environment variable {env_var} not found for LLM API key"
-                )
-            llm_config['api_key'] = api_key
-
-        return llm_config
-
     def validate_config(self):
         """Validate configuration completeness and correctness"""
         errors = []
@@ -106,7 +91,8 @@ class ConfigManager:
 
         # Validate LLM config
         llm_config = self.get('llm', {})
-        required_llm_fields = ['provider', 'model', 'api_key_env']
+        # API keys are read from MISTRAL_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY
+        required_llm_fields = ['provider', 'model']
         for field in required_llm_fields:
             if field not in llm_config:
                 errors.append(f"LLM config: missing field '{field}'")

@@ -4,7 +4,7 @@ import logging
 import pickle
 import json
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Any, List, Optional, TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
@@ -13,14 +13,14 @@ if TYPE_CHECKING:
 try:
     from sklearn.ensemble import RandomForestClassifier
     from sklearn.model_selection import train_test_split
-    from sklearn.metrics import classification_report, accuracy_score
+    from sklearn.metrics import accuracy_score
     from sklearn.preprocessing import StandardScaler
     sklearn_available = True
 except ImportError:
     sklearn_available = False
 
 from .feature_extractor import FeatureExtractor
-from .training_store import load_samples, write_samples_atomic
+from .training_store import load_samples, read_samples_readonly, write_samples_atomic
 
 
 class MLClassifier:
@@ -78,8 +78,8 @@ class MLClassifier:
                 feature_vector_scaled = self.scaler.transform([feature_vector])
             except Exception as shape_err:
                 # Handle feature size mismatch by reinitializing the model with current features
-                self.logger.warning(f"Scaler transform failed (likely feature mismatch): {shape_err}. Attempting auto-reinit.")
-                reinit = self.initialize_default_model()
+                self.logger.warning(f"Scaler transform failed (likely feature mismatch): {shape_err}. Retraining on stored history.")
+                reinit = self.retrain_from_history()
                 if reinit.get("success"):
                     try:
                         feature_vector = self._features_to_vector(self.feature_extractor.extract_features(email_data))
@@ -222,12 +222,12 @@ class MLClassifier:
 
             # Split data (including sample weights)
             if len(X) >= 20:
-                X_train, X_test, y_train, y_test, weights_train, weights_test = train_test_split(
+                X_train, X_test, y_train, y_test, weights_train, _ = train_test_split(
                     X, y, sample_weights, test_size=0.2, random_state=42, stratify=y
                 )
             else:
                 X_train, X_test, y_train, y_test = X, X, y, y
-                weights_train, weights_test = sample_weights, sample_weights
+                weights_train = sample_weights
 
             # Scale features
             X_train_scaled = self.scaler.fit_transform(X_train)
@@ -250,9 +250,6 @@ class MLClassifier:
             # Save model
             self._save_model()
             self.model_trained = True
-
-            # Save training data for future use
-            self._save_training_data(samples)
 
             # Calculate weight statistics
             weight_stats = {
@@ -278,120 +275,17 @@ class MLClassifier:
             self.logger.error(f"Training error: {e}")
             return {"success": False, "error": str(e)}
 
-    def create_default_training_data(self) -> List[Dict[str, Any]]:
-        """Create default training samples for initial model training"""
-        samples = []
+    def retrain_from_history(self) -> Dict[str, Any]:
+        """Retrain on the full stored history (data/training_data.json), read-only.
 
-        # Spam samples
-        spam_samples = [
-            {
-                'email_data': {
-                    'sender_email': 'winner@lottery-scam.tk',
-                    'sender_domain': 'lottery-scam.tk',
-                    'subject': 'CONGRATULATIONS!!! You won $1,000,000 !!!',
-                    'text_content': 'Urgent! You have won the lottery! Click here now to claim your prize of $1,000,000. Act immediately before this offer expires!'
-                },
-                'is_spam': True
-            },
-            {
-                'email_data': {
-                    'sender_email': 'noreply@suspicious.click',
-                    'sender_domain': 'suspicious.click',
-                    'subject': 'Your account will be suspended - Verify NOW!',
-                    'text_content': 'Your account has been compromised. Click this link to verify your password and prevent suspension. Act now!'
-                },
-                'is_spam': True
-            },
-            {
-                'email_data': {
-                    'sender_email': 'prince@nigeria.com',
-                    'sender_domain': 'nigeria.com',
-                    'subject': 'Urgent Business Proposal - Millions Available',
-                    'text_content': 'Dear beneficiary, I am a prince with millions of dollars to transfer. I need your help to transfer funds. You will receive 30% of $10 million.'
-                },
-                'is_spam': True
-            },
-            {
-                'email_data': {
-                    'sender_email': 'pharmacy123@cheap-meds.tk',
-                    'sender_domain': 'cheap-meds.tk',
-                    'subject': 'Cheap Viagra! 80% OFF!! Limited Time!!!',
-                    'text_content': 'Get cheap prescription drugs with no prescription needed! Viagra, Cialis, and more at 80% discount. Order now while supplies last!'
-                },
-                'is_spam': True
-            },
-            {
-                'email_data': {
-                    'sender_email': 'marketing@get-rich-quick.ml',
-                    'sender_domain': 'get-rich-quick.ml',
-                    'subject': 'Make $5000/month working from home!',
-                    'text_content': 'Amazing opportunity to make money from home! No experience required. Make $5000 per month guaranteed! Click here to start earning now!'
-                },
-                'is_spam': True
-            }
-        ]
-
-        # Ham (legitimate) samples
-        ham_samples = [
-            {
-                'email_data': {
-                    'sender_email': 'support@github.com',
-                    'sender_domain': 'github.com',
-                    'subject': 'Your pull request has been merged',
-                    'text_content': 'Hello, your pull request #123 has been successfully merged into the main branch. Thank you for your contribution!'
-                },
-                'is_spam': False
-            },
-            {
-                'email_data': {
-                    'sender_email': 'notifications@linkedin.com',
-                    'sender_domain': 'linkedin.com',
-                    'subject': 'You have 3 new connections',
-                    'text_content': 'Hi there, you have 3 new connection requests on LinkedIn. View your pending invitations to connect with your network.'
-                },
-                'is_spam': False
-            },
-            {
-                'email_data': {
-                    'sender_email': 'receipts@amazon.com',
-                    'sender_domain': 'amazon.com',
-                    'subject': 'Your order has shipped',
-                    'text_content': 'Your order #123456789 has been shipped and is on its way. You can track your package using the tracking number provided.'
-                },
-                'is_spam': False
-            },
-            {
-                'email_data': {
-                    'sender_email': 'newsletter@company.com',
-                    'sender_domain': 'company.com',
-                    'subject': 'Monthly newsletter - Product updates',
-                    'text_content': 'Here are the latest updates from our team. We have released new features and improvements to our product. Read more about them here.'
-                },
-                'is_spam': False
-            },
-            {
-                'email_data': {
-                    'sender_email': 'team@calendar-app.com',
-                    'sender_domain': 'calendar-app.com',
-                    'subject': 'Reminder: Meeting tomorrow at 2 PM',
-                    'text_content': 'This is a reminder about your scheduled meeting tomorrow at 2:00 PM. Please let us know if you need to reschedule.'
-                },
-                'is_spam': False
-            }
-        ]
-
-        samples.extend(spam_samples)
-        samples.extend(ham_samples)
-
-        return samples
-
-    def initialize_default_model(self) -> Dict[str, Any]:
-        """Initialize model with default training data"""
-        if not sklearn_available:
-            return {"success": False, "error": "scikit-learn not available"}
-
-        self.logger.info("Initializing ML model with default training data...")
-        samples = self.create_default_training_data()
+        Used by feedback retraining and when no usable model exists (missing
+        files, or the feature set changed). Never falls back to synthetic data:
+        without enough real samples the model stays unavailable, and classify()
+        then keeps every email.
+        """
+        samples = read_samples_readonly(self.training_data_file)
+        if not samples:
+            return {"success": False, "error": "no training data readable"}
         return self.train_with_samples(samples)
 
     def _calculate_marketing_score(self, features: Dict[str, float]) -> float:
@@ -474,35 +368,27 @@ class MLClassifier:
                 saved_len = len(saved_feature_names) if isinstance(saved_feature_names, list) else None
                 if (scaler_len is not None and scaler_len != current_len) or (saved_len is not None and saved_len != current_len):
                     self.logger.warning(
-                        f"Feature mismatch detected (scaler:{scaler_len}, saved:{saved_len}, current:{current_len}). Reinitializing model with default data.")
-                    self.initialize_default_model()
+                        f"Feature mismatch detected (scaler:{scaler_len}, saved:{saved_len}, current:{current_len}). Retraining on stored history.")
+                    self.retrain_from_history()
                 else:
                     self.model_trained = True
                     self.logger.info("ML model loaded successfully")
             else:
-                self.logger.info("No saved model found. Initialize with default data.")
-                # Auto-initialize with default data
-                self.initialize_default_model()
+                self.logger.info("No saved model found. Training on stored history.")
+                self.retrain_from_history()
         except Exception as e:
             self.logger.warning(f"Error loading model: {e}")
 
     def persist_sample(self, sample: Dict[str, Any]):
         """Persist a single confirmed training sample immediately (merged, deduped).
 
-        Used for labels we already know with certainty outside of a full
-        retrain - e.g. a whitelist/blacklist hit - without waiting for a
-        batch to accumulate.
+        The only way samples enter training_data.json: a user reclassification
+        (feedback folders) or a whitelist/blacklist hit when lists are active.
         """
         self._save_training_data([sample])
 
     def _save_training_data(self, samples: List[Dict[str, Any]]):
-        """Persist training data, merging with what's already on disk.
-
-        train_with_samples() is sometimes called with only the current batch
-        (e.g. the daemon's auto-retrain, which starts from an empty list on
-        every restart). Overwriting the file here used to wipe out real
-        feedback accumulated in previous runs.
-        """
+        """Persist training data, merging with what's already on disk (never overwrite)."""
         try:
             existing = load_samples(self.training_data_file)
             if existing is None:
@@ -526,20 +412,3 @@ class MLClassifier:
             write_samples_atomic(self.training_data_file, merged)
         except Exception as e:
             self.logger.error(f"Error saving training data: {e}")
-
-    def get_feature_importance(self) -> Dict[str, float]:
-        """Get feature importance from trained model"""
-        if not self.is_available():
-            return {}
-
-        try:
-            importances = self.model.feature_importances_
-            feature_importance = {}
-            for i, feature_name in enumerate(self.feature_names):
-                feature_importance[feature_name] = float(importances[i])
-
-            # Sort by importance
-            return dict(sorted(feature_importance.items(), key=lambda x: x[1], reverse=True))
-        except Exception as e:
-            self.logger.error(f"Error getting feature importance: {e}")
-            return {}

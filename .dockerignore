@@ -59,19 +59,14 @@ Thumbs.db
 
 # Données locales (seront montées via volumes)
 data/
-stats_cli.json
 
 # Fichiers temporaires et debug
 *.tmp
 *.temp
 debug_*
-reproduce_error.py
 test_*.py
-show_stats.py
 
 # Exception pour les scripts importants
-!force_retrain.py
-!force_retrain_real.py
 
 # Build et distribution
 build/

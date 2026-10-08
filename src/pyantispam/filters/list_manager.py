@@ -1,7 +1,6 @@
 """Whitelist and blacklist management"""
 
 import json
-import os
 from pathlib import Path
 from typing import Set, Dict, List, Optional
 from email_validator import validate_email, EmailNotValidError
@@ -257,96 +256,3 @@ class ListManager:
             "blacklist_emails": len(self.blacklist["emails"]),
             "blacklist_domains": len(self.blacklist["domains"])
         }
-
-    def clear_whitelist(self, confirm: bool = False) -> bool:
-        """Clear all whitelist entries"""
-        if not confirm:
-            raise ValueError("Clear operation requires explicit confirmation")
-
-        self.whitelist["emails"].clear()
-        self.whitelist["domains"].clear()
-        self._save_lists()
-        self.logger.warning("Cleared all whitelist entries")
-        return True
-
-    def clear_blacklist(self, confirm: bool = False) -> bool:
-        """Clear all blacklist entries"""
-        if not confirm:
-            raise ValueError("Clear operation requires explicit confirmation")
-
-        self.blacklist["emails"].clear()
-        self.blacklist["domains"].clear()
-        self._save_lists()
-        self.logger.warning("Cleared all blacklist entries")
-        return True
-
-    def import_list(self, file_path: str, list_type: str, replace: bool = False):
-        """Import list from file (JSON or text format)"""
-        import_path = Path(file_path)
-        if not import_path.exists():
-            raise FileNotFoundError(f"Import file not found: {file_path}")
-
-        if list_type not in ["whitelist", "blacklist"]:
-            raise ValueError(f"Invalid list type: {list_type}")
-
-        target_list = self.whitelist if list_type == "whitelist" else self.blacklist
-
-        if replace:
-            target_list["emails"].clear()
-            target_list["domains"].clear()
-
-        try:
-            with open(import_path, 'r', encoding='utf-8') as f:
-                if import_path.suffix.lower() == '.json':
-                    data = json.load(f)
-                    emails = data.get("emails", [])
-                    domains = data.get("domains", [])
-                else:
-                    # Assume text file with one item per line
-                    lines = f.read().strip().split('\n')
-                    emails = [line.strip() for line in lines if '@' in line]
-                    domains = [line.strip() for line in lines if '@' not in line and line.strip()]
-
-            # Add items with validation
-            for email in emails:
-                try:
-                    validated_email = self._validate_email(email)
-                    target_list["emails"].add(validated_email)
-                except ValueError as e:
-                    self.logger.warning(f"Skipped invalid email '{email}': {e}")
-
-            for domain in domains:
-                try:
-                    validated_domain = self._validate_domain(domain)
-                    target_list["domains"].add(validated_domain)
-                except ValueError as e:
-                    self.logger.warning(f"Skipped invalid domain '{domain}': {e}")
-
-            self._save_lists()
-            self.logger.info(f"Imported {list_type} from {file_path}")
-
-        except Exception as e:
-            self.logger.error(f"Error importing {list_type}: {e}")
-            raise
-
-    def export_list(self, file_path: str, list_type: str):
-        """Export list to JSON file"""
-        export_path = Path(file_path)
-        export_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if list_type == "whitelist":
-            data = self.get_whitelist()
-        elif list_type == "blacklist":
-            data = self.get_blacklist()
-        else:
-            raise ValueError(f"Invalid list type: {list_type}")
-
-        try:
-            with open(export_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-
-            self.logger.info(f"Exported {list_type} to {file_path}")
-
-        except Exception as e:
-            self.logger.error(f"Error exporting {list_type}: {e}")
-            raise

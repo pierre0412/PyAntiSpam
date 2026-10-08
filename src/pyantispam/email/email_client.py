@@ -4,7 +4,7 @@ import imaplib
 import email
 import ssl
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from email.message import EmailMessage
 import logging
 
@@ -132,24 +132,6 @@ class EmailClient:
         """Get list of email IDs based on search criteria"""
         # Use the safer method by default
         return self.get_email_ids_safe(search_criteria)
-
-    def get_email_ids_basic(self, search_criteria: str = "ALL") -> List[str]:
-        """Basic email ID retrieval without extra safety checks"""
-        if not self.imap:
-            raise ConnectionError("Not connected to IMAP server")
-
-        try:
-            self._throttle_request()
-            status, data = self.imap.search(None, search_criteria)
-            if status == "OK":
-                email_ids = data[0].split()
-                return [email_id.decode() for email_id in email_ids]
-            else:
-                self.logger.error(f"Search failed: {data}")
-                return []
-        except Exception as e:
-            self.logger.error(f"Error searching emails: {e}")
-            return []
 
     def fetch_email(self, email_id: str) -> Optional[Dict[str, Any]]:
         """Fetch email by ID and return parsed data, preserving unread status"""
@@ -332,25 +314,6 @@ class EmailClient:
                 self.logger.info(f"Created folder: {folder_name}")
         except Exception as e:
             self.logger.warning(f"Could not create/check folder {folder_name}: {e}")
-
-    def delete_email(self, email_id: str) -> bool:
-        """Delete email permanently"""
-        if not self.imap:
-            raise ConnectionError("Not connected to IMAP server")
-
-        try:
-            # Mark email as deleted
-            self.imap.store(email_id, "+FLAGS", "\\Deleted")
-
-            # Expunge to actually delete
-            self.imap.expunge()
-
-            self.logger.info(f"Deleted email {email_id}")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Error deleting email {email_id}: {e}")
-            return False
 
     def get_folder_list(self) -> List[str]:
         """Get list of available folders"""

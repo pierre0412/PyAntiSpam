@@ -6,6 +6,7 @@ Aucun historique expéditeur dans les métadonnées : on mesure le signal propre
 Lecture seule.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -17,15 +18,30 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
-sys.path.insert(0, str(Path(__file__).parent))
 
+from pyantispam.embeddings.shadow import build_text  # noqa: E402
 from pyantispam.ml.feature_extractor import FeatureExtractor  # noqa: E402
-from embeddings_pilot import build_embedding_text, compute_embeddings, load_real_samples  # noqa: E402
+
+# Same model as production (config.yaml: embeddings.model); override with EMBEDDING_MODEL.
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "dangvantuan/sentence-camembert-base")
 
 SEEDS = [0, 1, 2, 3, 4]
 META_PREFIXES = ("auth_", "temporal_", "x_spam", "from_dkim", "has_list", "replyto",
                  "message_id", "received_hops", "sender_suspicious_tld", "sender_has_",
                  "sender_domain_length", "sender_local_length")
+
+
+def load_real_samples():
+    samples = json.loads(Path("data/training_data.json").read_text(encoding="utf-8"))
+    return [s for s in samples
+            if (s["email_data"].get("body") or s["email_data"].get("text_content") or "").strip()
+            or s["email_data"].get("subject", "").strip()]
+
+
+def compute_embeddings(texts):
+    from sentence_transformers import SentenceTransformer
+    print(f"modèle d'embeddings : {EMBEDDING_MODEL}")
+    return SentenceTransformer(EMBEDDING_MODEL).encode(texts, show_progress_bar=False)
 
 
 def metrics(y_true, y_pred):
@@ -54,7 +70,7 @@ def main():
     feats = [ex.extract_features(s["email_data"]) for s in samples]
     X_meta = np.array([[f.get(n, 0.0) for n in meta_names] for f in feats])
     X_cont = np.array([[f.get(n, 0.0) for n in content_names] for f in feats])
-    X_emb = compute_embeddings([build_embedding_text(s["email_data"]) for s in samples])
+    X_emb = compute_embeddings([build_text(s["email_data"]) for s in samples])
 
     rows = {k: [] for k in ["CamemBERT", "RF contenu", "RF métadonnées", "combiné"]}
     for seed in SEEDS:
