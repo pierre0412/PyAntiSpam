@@ -134,7 +134,12 @@ class EmailClient:
         return self.get_email_ids_safe(search_criteria)
 
     def fetch_email(self, email_id: str) -> Optional[Dict[str, Any]]:
-        """Fetch email by ID and return parsed data, preserving unread status"""
+        """Fetch email by ID and return parsed data.
+
+        Uses BODY.PEEK[], which never sets \\Seen: reading an email leaves its
+        read/unread status untouched, so there is nothing to restore afterwards
+        and nothing left half-done if the connection drops mid-way.
+        """
         if not self.imap:
             raise ConnectionError("Not connected to IMAP server")
 
@@ -144,11 +149,8 @@ class EmailClient:
                 self.logger.warning(f"Invalid email ID: {email_id}")
                 return None
 
-            # Check if email was unread before fetching (this preserves the status)
-            was_unread = self.is_email_unread(email_id)
-
             self._throttle_request()
-            status, data = self.imap.fetch(email_id, "(RFC822)")
+            status, data = self.imap.fetch(email_id, "(BODY.PEEK[])")
             if status != "OK":
                 self.logger.warning(f"Email {email_id} no longer exists or is invalid")
                 return None
@@ -161,19 +163,7 @@ class EmailClient:
             raw_email = data[0][1]
             email_message = email.message_from_bytes(raw_email)
 
-            # Parse the email data
-            email_data = self._parse_email(email_message, email_id)
-
-            # Add unread status to email data
-            if email_data:
-                email_data['was_unread'] = was_unread
-
-                # If the email was unread before fetching, mark it back as unread
-                if was_unread:
-                    self.mark_email_unread(email_id)
-                    self.logger.debug(f"Preserved unread status for email {email_id}")
-
-            return email_data
+            return self._parse_email(email_message, email_id)
 
         except Exception as e:
             self.logger.warning(f"Error fetching email {email_id}: {e}")
@@ -184,7 +174,7 @@ class EmailClient:
         need the raw message rather than our parsed fields (e.g. the rspamd
         shadow classifier). Kept separate from fetch_email() on purpose: the
         parsed dict gets persisted as JSON in several places, and raw bytes
-        are not JSON-serializable.
+        are not JSON-serializable. BODY.PEEK[] leaves the read status untouched.
         """
         if not self.imap:
             raise ConnectionError("Not connected to IMAP server")
@@ -193,15 +183,10 @@ class EmailClient:
             if not self._is_valid_email_id(email_id):
                 return None
 
-            was_unread = self.is_email_unread(email_id)
             self._throttle_request()
-            status, data = self.imap.fetch(email_id, "(RFC822)")
+            status, data = self.imap.fetch(email_id, "(BODY.PEEK[])")
             if status != "OK" or not data or not data[0] or len(data[0]) < 2:
                 return None
-
-            if was_unread:
-                self.mark_email_unread(email_id)
-
             return data[0][1]
         except Exception as e:
             self.logger.warning(f"Error fetching raw message {email_id}: {e}")
@@ -440,41 +425,6 @@ class EmailClient:
             return status == "OK"
 
         except Exception:
-            return False
-
-    def is_email_unread(self, email_id: str) -> bool:
-        """Check if an email is unread (has UNSEEN flag)"""
-        if not self.imap:
-            return False
-
-        try:
-            self._throttle_request()
-            status, data = self.imap.fetch(email_id, "(FLAGS)")
-            if status == "OK" and data and data[0]:
-                flags_response = data[0].decode()
-                # Check if UNSEEN flag is NOT present (email is read) or IS present (email is unread)
-                return "\\Seen" not in flags_response
-            return False
-        except Exception as e:
-            self.logger.debug(f"Error checking unread status for email {email_id}: {e}")
-            return False
-
-    def mark_email_unread(self, email_id: str) -> bool:
-        """Mark an email as unread by removing the SEEN flag"""
-        if not self.imap:
-            return False
-
-        try:
-            self._throttle_request()
-            status, data = self.imap.store(email_id, "-FLAGS", "\\Seen")
-            if status == "OK":
-                self.logger.debug(f"Marked email {email_id} as unread")
-                return True
-            else:
-                self.logger.warning(f"Failed to mark email {email_id} as unread: {data}")
-                return False
-        except Exception as e:
-            self.logger.error(f"Error marking email {email_id} as unread: {e}")
             return False
 
     def mark_email_read(self, email_id: str) -> bool:

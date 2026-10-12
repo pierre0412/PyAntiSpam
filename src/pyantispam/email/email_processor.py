@@ -190,14 +190,7 @@ class EmailProcessor:
                         results["spam_detected"] += 1
                         if self._handle_spam_email(client, email_id, email_data, decision, account_config):
                             results["spam_moved"] += 1
-                    else:
-                        # Email is not spam, preserve unread status if it was originally unread
-                        was_unread = email_data.get('was_unread', False)
-                        if was_unread:
-                            # Make sure the email stays unread
-                            client.mark_email_unread(email_id)
-                            account = email_data.get('account_name', 'unknown')
-                            self.logger.debug(f"[account: {account}] Preserved unread status for non-spam email {email_id}")
+                    # Kept emails need nothing: they were read with BODY.PEEK[] and stay unread.
 
                     # Log the decision
                     self._log_decision(email_data, decision)
