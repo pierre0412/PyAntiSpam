@@ -49,6 +49,9 @@ learning:
   retrain_threshold: 10            # Retrain the RF on the full history after N reclassifications
   auto_blacklist_threshold: 3      # Add sender to blacklist after N "is spam" reclassifications
   auto_whitelist_threshold: 3      # Add sender to whitelist after N "not spam" reclassifications
+  tacit_confirmation_days: 0       # > 0: an LLM spam verdict not moved to PYANTISPAM_NOT_SPAM
+                                   # within this many days (left in the spam folder or deleted)
+                                   # is learned as spam. 0 = off: only explicit reclassifications.
 
 # Feedback folders (fixed names, created automatically in each account):
 # - PYANTISPAM_IS_SPAM      a spam that was kept: learned as spam, moved to the spam folder

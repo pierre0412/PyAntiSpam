@@ -8,7 +8,7 @@ Il tourne en continu (mode daemon, conseillé via Docker, voir [README-Docker.md
 ## Principes
 
 - **Ne jamais perdre un mail.** Dans le doute, le mail est gardé. Un spam est *déplacé*, jamais supprimé (sauf purge explicite, désactivée par défaut).
-- **Apprendre seulement de l'utilisateur.** Les modèles n'apprennent que de vos reclassements (dossiers de feedback). Jamais de leurs propres décisions ni de celles du LLM.
+- **Apprendre seulement de l'utilisateur.** Les modèles n'apprennent que de vos reclassements (dossiers de feedback), ou d'un verdict du LLM que vous avez laissé passer (confirmation tacite, désactivée par défaut). Jamais de leurs propres décisions ni du LLM seul.
 - **Mesurer avant de faire confiance.** Les nouveaux classifieurs tournent d'abord en « mode fantôme » : ils notent leur avis à côté de la vraie décision, sans agir.
 
 ## Chaîne de décision
@@ -49,6 +49,12 @@ Chaque reclassement :
 2. est mémorisé (`data/llm_cache.json`) : un mail identique (même expéditeur, même sujet, même début de corps) recevra désormais votre décision ;
 3. est appris par rspamd (`learnspam` / `learnham`), si rspamd est activé ;
 4. fait avancer le compteur de réentraînement (`data/retrain_state.json`).
+
+### Confirmation tacite (optionnelle)
+
+Avec `learning.tacit_confirmation_days: N` (0 par défaut, désactivée), un mail classé spam **par le LLM** et que vous n'avez pas remis dans `PYANTISPAM_NOT_SPAM` sous N jours est appris comme spam, comme si vous l'aviez mis dans `PYANTISPAM_IS_SPAM`. Le supprimer du dossier spam compte comme le laisser passer : une copie est gardée dans `data/pending_llm_spam.json` jusqu'à la confirmation. Les verdicts du Random Forest ne sont jamais concernés.
+
+Si vous corrigez un mail après sa confirmation, votre correction remplace l'étiquette : pour un même mail, la décision la plus récente l'emporte.
 
 ### Réentraînement
 
@@ -174,6 +180,7 @@ Limites de `live_eval.py` : les faux positifs sont bien mesurés, puisque vous l
 | `backups/` | Copie quotidienne de `training_data.json`, gardée 7 jours (`scripts/backup_training.sh`, via cron) |
 | `spam_model.pkl`, `feature_scaler.pkl`, `feature_names.json` | Random Forest entraîné |
 | `retrain_state.json` | Compteur de reclassements depuis le dernier réentraînement |
+| `pending_llm_spam.json` | Spams du LLM en attente de confirmation tacite |
 | `llm_cache.json` | Verdicts LLM et vos corrections, par empreinte de mail |
 | `whitelist.json`, `blacklist.json` | Listes |
 | `sender_feedback_history.json` | Corrections par expéditeur (listes automatiques) |

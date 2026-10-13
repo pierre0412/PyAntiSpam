@@ -370,8 +370,9 @@ class MLClassifier:
     def persist_sample(self, sample: Dict[str, Any]):
         """Persist a single confirmed training sample immediately (merged, deduped).
 
-        The only way samples enter training_data.json: a user reclassification
-        (feedback folders) or a whitelist/blacklist hit when lists are active.
+        The only ways samples enter training_data.json: a user reclassification
+        (feedback folders), an LLM spam verdict the user let stand (tacit
+        confirmation), or a whitelist/blacklist hit when lists are active.
         """
         self._save_training_data([sample])
 
@@ -382,19 +383,33 @@ class MLClassifier:
             if existing is None:
                 return
 
-            seen = set()
-            merged: List[Dict[str, Any]] = []
-            for sample in existing + samples:
+            def key(sample: Dict[str, Any]) -> str:
                 email_data = sample.get('email_data', {})
                 content = str(email_data.get('body', email_data.get('text_content', '')))[:200]
-                fingerprint = f"{email_data.get('sender_email', '')}|{email_data.get('subject', '')}|{content}"
-                if fingerprint in seen:
-                    continue
-                seen.add(fingerprint)
-                merged.append(sample)
+                return f"{email_data.get('sender_email', '')}|{email_data.get('subject', '')}|{content}"
+
+            index: Dict[str, int] = {}
+            merged: List[Dict[str, Any]] = []
+            for sample in existing:
+                if key(sample) not in index:
+                    index[key(sample)] = len(merged)
+                    merged.append(sample)
+
+            changed = False
+            for sample in samples:
+                k = key(sample)
+                if k not in index:
+                    index[k] = len(merged)
+                    merged.append(sample)
+                    changed = True
+                elif merged[index[k]].get('is_spam') != sample.get('is_spam'):
+                    # Same email, opposite label: the newest decision wins (e.g. a
+                    # PYANTISPAM_NOT_SPAM after a tacitly confirmed LLM spam).
+                    merged[index[k]] = sample
+                    changed = True
 
             # Rien de nouveau : inutile de réécrire 6 Mo sur le SSD
-            if len(merged) == len(existing):
+            if not changed:
                 return
 
             write_samples_atomic(self.training_data_file, merged)

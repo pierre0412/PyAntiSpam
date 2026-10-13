@@ -1,5 +1,6 @@
 """User feedback processing for continuous learning"""
 
+import base64
 import hashlib
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
     from ..config import ConfigManager
 
 RETRAIN_STATE_FILE = Path("data/retrain_state.json")
+PENDING_LLM_SPAM_FILE = Path("data/pending_llm_spam.json")
 
 
 class FeedbackProcessor:
@@ -82,8 +84,87 @@ class FeedbackProcessor:
                 self.logger.error(f"Error processing feedback folder {folder_name}: {e}")
                 results["errors"] += 1
 
+        # After the feedback folders, so a NOT_SPAM filed this cycle is seen first.
+        try:
+            results["tacit_confirmed"] = self._confirm_tacit_llm_spam(account_name)
+        except Exception as e:
+            self.logger.warning(f"[account: {account_name}] Tacit confirmation failed (non-blocking): {e}")
+
         self._retrain_if_due()
         return results
+
+    # --- Tacit confirmation of LLM spam verdicts ---------------------------------
+    # An LLM SPAM verdict the user has not overturned (PYANTISPAM_NOT_SPAM) within
+    # learning.tacit_confirmation_days is learned as if filed in PYANTISPAM_IS_SPAM.
+    # The models still never learn from the LLM alone: only from a verdict the user
+    # had time to overturn and did not. Deleting the spam counts as letting it
+    # stand, so a copy is kept at verdict time: the mail is often gone by then.
+
+    def _load_pending(self) -> Dict[str, Any]:
+        try:
+            if PENDING_LLM_SPAM_FILE.exists():
+                return json.loads(PENDING_LLM_SPAM_FILE.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as e:
+            self.logger.warning(f"Could not read {PENDING_LLM_SPAM_FILE}: {e}")
+        return {}
+
+    def _save_pending(self, pending: Dict[str, Any]) -> None:
+        PENDING_LLM_SPAM_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PENDING_LLM_SPAM_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(pending, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(PENDING_LLM_SPAM_FILE)
+
+    def register_llm_spam(self, email_data: Dict[str, Any], fingerprint: str,
+                          raw_message: Optional[bytes] = None) -> None:
+        """Keep a copy of an LLM spam verdict just moved to the spam folder, until confirmed."""
+        if float(self.config.get("learning.tacit_confirmation_days", 0)) <= 0:
+            return
+        pending = self._load_pending()
+        pending.setdefault(fingerprint, {
+            "account": email_data.get("account_name", "unknown"),
+            "decided_at": time.time(),
+            "email_data": email_data,
+            "raw_b64": base64.b64encode(raw_message).decode("ascii") if raw_message else None,
+        })
+        self._save_pending(pending)
+
+    def _confirm_tacit_llm_spam(self, account_name: str) -> int:
+        """Learn this account's LLM spam verdicts the user let stand. Returns the count learned."""
+        delay_days = float(self.config.get("learning.tacit_confirmation_days", 0))
+        if delay_days <= 0:
+            return 0
+        pending = self._load_pending()
+        now = time.time()
+        learned = dropped = 0
+        for fingerprint, entry in list(pending.items()):
+            if entry.get("account") != account_name:
+                continue
+            cached = self.llm_cache.get(fingerprint) or {}
+            if cached.get("method") == "user_feedback":
+                pending.pop(fingerprint)  # the user reclassified it: already learned that way
+                dropped += 1
+                continue
+            if now - entry.get("decided_at", now) < delay_days * 86400:
+                continue
+
+            email_data = entry["email_data"]
+            self._persist_training_sample({"email_data": email_data, "is_spam": True})
+            self._count_feedback()
+            if entry.get("raw_b64"):
+                try:
+                    self.rspamd_shadow.learn_spam(base64.b64decode(entry["raw_b64"]))
+                except Exception as e:
+                    self.logger.warning(f"rspamd learn call failed (non-blocking): {e}")
+            pending.pop(fingerprint)
+            learned += 1
+            self.logger.warning(
+                f"✅ [account: {account_name}] Confirmation tacite : spam LLM appris "
+                f"({email_data.get('sender_email', '')} | {email_data.get('subject', '')[:60]})"
+            )
+
+        if learned or dropped:
+            self._save_pending(pending)
+        return learned
 
     def _load_retrain_state(self) -> Dict[str, Any]:
         state: Dict[str, Any] = {"since_retrain": 0}

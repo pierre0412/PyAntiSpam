@@ -190,6 +190,7 @@ class EmailProcessor:
                         results["spam_detected"] += 1
                         if self._handle_spam_email(client, email_id, email_data, decision, account_config):
                             results["spam_moved"] += 1
+                            self._register_llm_spam(email_data, decision, email_fingerprint, raw_message_for_shadow)
                     # Kept emails need nothing: they were read with BODY.PEEK[] and stay unread.
 
                     # Log the decision
@@ -512,6 +513,17 @@ class EmailProcessor:
             account = email_data.get('account_name', 'unknown')
             self.logger.error(f"[account: {account}] Failed to move spam email {email_id}: {e}")
             return False
+
+    def _register_llm_spam(self, email_data: Dict[str, Any], decision: Dict[str, Any],
+                           email_fingerprint: str, raw_message: Optional[bytes]):
+        """Queue an LLM spam verdict for tacit confirmation (see FeedbackProcessor)."""
+        method = str(decision.get("method", ""))
+        if not method.startswith("llm_") or "error" in method:
+            return
+        try:
+            self._get_feedback_processor().register_llm_spam(email_data, email_fingerprint, raw_message)
+        except Exception as e:
+            self.logger.warning(f"Could not queue LLM spam for tacit confirmation (non-blocking): {e}")
 
     def _log_decision(self, email_data: Dict[str, Any], decision: Dict[str, Any]):
         """Log spam detection decision"""
