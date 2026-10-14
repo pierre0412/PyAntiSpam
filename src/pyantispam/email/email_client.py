@@ -2,11 +2,15 @@
 
 import imaplib
 import email
+import re
 import ssl
 import time
 from typing import List, Dict, Any, Optional
 from email.message import EmailMessage
 import logging
+
+# One LIST response line: (flags) delimiter name; the name may be quoted or bare.
+_LIST_RE = re.compile(r'^\((?P<flags>[^)]*)\) (?P<delim>"(?:[^"\\]|\\.)*"|NIL) (?P<name>.+)$')
 
 
 class EmailClient:
@@ -291,14 +295,31 @@ class EmailClient:
     def _create_folder_if_not_exists(self, folder_name: str):
         """Create folder if it doesn't exist"""
         try:
-            status, folders = self.imap.list()
-            existing_folders = [folder.decode().split('"')[-2] for folder in folders]
-
-            if folder_name not in existing_folders:
-                self.imap.create(folder_name)
+            if folder_name in self.get_folder_list():
+                return
+            status, data = self.imap.create(folder_name)
+            if status == "OK":
                 self.logger.info(f"Created folder: {folder_name}")
+            else:
+                self.logger.warning(f"Could not create folder {folder_name}: {data}")
         except Exception as e:
             self.logger.warning(f"Could not create/check folder {folder_name}: {e}")
+
+    @staticmethod
+    def _parse_list_line(line) -> Optional[str]:
+        """Extract the folder name from one LIST response item, or None"""
+        if isinstance(line, tuple):
+            # Name sent as a literal: (b'(flags) "." {12}', b'name')
+            return line[1].decode(errors='replace') if len(line) > 1 else None
+        if not isinstance(line, bytes):
+            return None
+        match = _LIST_RE.match(line.decode(errors='replace'))
+        if not match:
+            return None
+        name = match.group('name')
+        if len(name) >= 2 and name[0] == name[-1] == '"':
+            name = re.sub(r'\\(.)', r'\1', name[1:-1])
+        return name
 
     def get_folder_list(self) -> List[str]:
         """Get list of available folders"""
@@ -308,13 +329,7 @@ class EmailClient:
         try:
             status, folders = self.imap.list()
             if status == "OK":
-                folder_names = []
-                for folder in folders:
-                    # Parse folder name from IMAP response
-                    folder_info = folder.decode()
-                    folder_name = folder_info.split('"')[-2]
-                    folder_names.append(folder_name)
-                return folder_names
+                return [name for name in map(self._parse_list_line, folders) if name]
             else:
                 self.logger.error(f"Failed to get folder list: {folders}")
                 return []
