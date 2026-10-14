@@ -11,6 +11,9 @@ des doublons). Biais connus :
 - faux positifs bien mesurés (l'utilisateur les corrige) ;
 - faux négatifs sous-estimés (un spam gardé et non vu reste compté comme juste) ;
 - seuls les mails plus vieux que --min-age-hours sont comptés (délai de relecture).
+La section « mails corrigés seulement » n'a pas ce biais : l'étiquette y vient
+toujours de l'utilisateur. C'est la seule mesure de justesse pour le LLM, dont
+les verdicts non corrigés servent sinon d'étiquette à eux-mêmes.
 
 Lecture seule : aucun mail, aucun dossier, aucun fichier de données n'est modifié.
 
@@ -110,7 +113,8 @@ def llm_comparison(args, feedback, first, llm):
     """Verdict du LLM contre les corrections, sur les mails qu'il a eus à juger."""
     cutoff = time.time() - args.min_age_hours * 3600
     keys = [fp for fp in first if fp in llm and first[fp]["timestamp"] <= cutoff]
-    print(f"LLM sur {len(keys)} mails qu'il a jugés (cache des décisions)")
+    print(f"LLM sur {len(keys)} mails qu'il a jugés (cache des décisions ; "
+          f"accord avec lui-même si non corrigé, voir la section suivante)")
     if not keys:
         return
     c = Counter()
@@ -120,6 +124,32 @@ def llm_comparison(args, feedback, first, llm):
     print(f"{'système':<12} {'n':>5} {'TP':>4} {'FN':>4} {'FP':>4} {'TN':>5} {'précision':>10} {'rappel':>8}")
     print(f"{'LLM':<12} {len(keys):>5} {c['TP']:>4} {c['FN']:>4} {c['FP']:>4} {c['TN']:>5} "
           f"{precision(c):>10.2f} {recall(c):>8.2f}")
+    print()
+
+
+def corrected_report(args, feedback, emb, first, rf, llm):
+    """Chaque système contre les seuls mails corrigés : l'étiquette vient toujours de l'utilisateur."""
+    cutoff = time.time() - args.min_age_hours * 3600
+    keys = [fp for fp in first if fp in feedback and first[fp]["timestamp"] <= cutoff]
+    print(f"mails corrigés seulement ({len(keys)}) : l'étiquette est toujours la vôtre")
+    systems = [
+        ("PyAntiSpam", keys, lambda fp: first[fp]["action"] == "SPAM"),
+        ("RF", [fp for fp in keys if fp in rf and fp in emb], lambda fp: rf[fp] >= args.threshold),
+        ("CamemBERT", [fp for fp in keys if fp in rf and fp in emb], lambda fp: emb[fp] >= args.threshold),
+        ("moyenne", [fp for fp in keys if fp in rf and fp in emb],
+         lambda fp: (rf[fp] + emb[fp]) / 2 >= args.threshold),
+        ("LLM", [fp for fp in keys if fp in llm], lambda fp: llm[fp]),
+    ]
+    print(f"{'système':<12} {'n':>5} {'TP':>4} {'FN':>4} {'FP':>4} {'TN':>5} {'précision':>10} {'rappel':>8}")
+    for name, subset, predicted in systems:
+        if not subset:
+            print(f"{name:<12} aucun mail corrigé")
+            continue
+        c = Counter()
+        for fp in subset:
+            add(c, feedback[fp] == "SPAM", predicted(fp))
+        print(f"{name:<12} {len(subset):>5} {c['TP']:>4} {c['FN']:>4} {c['FP']:>4} {c['TN']:>5} "
+              f"{precision(c):>10.2f} {recall(c):>8.2f}")
     print()
 
 
@@ -155,6 +185,7 @@ def global_report(args, feedback, emb, first, rf, llm):
     print()
     rf_comparison(args, feedback, emb, first, rf)
     llm_comparison(args, feedback, first, llm)
+    corrected_report(args, feedback, emb, first, rf, llm)
 
 
 def series_report(args, feedback, first):
