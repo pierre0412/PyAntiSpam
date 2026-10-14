@@ -30,6 +30,7 @@ class EmailClient:
         self.use_ssl = use_ssl
         self.imap = None
         self.current_folder = "INBOX"
+        self.uidvalidity: Optional[str] = None
         self.logger = logging.getLogger(__name__)
         self.request_delay = request_delay  # Delay between requests in seconds
         self.last_request_time = 0
@@ -123,6 +124,8 @@ class EmailClient:
             status, data = self.imap.select(folder)
             if status == "OK":
                 self.current_folder = folder
+                _, validity = self.imap.response("UIDVALIDITY")
+                self.uidvalidity = validity[-1].decode() if validity and validity[-1] else None
                 self.logger.debug(f"Selected folder: {folder}")
                 return True
             else:
@@ -131,6 +134,37 @@ class EmailClient:
         except Exception as e:
             self.logger.error(f"Error selecting folder {folder}: {e}")
             return False
+
+    def get_uid_map(self, email_ids: List[str]) -> Optional[Dict[str, str]]:
+        """Map sequence numbers to UIDs in one FETCH; None if it fails"""
+        if not email_ids:
+            return {}
+        try:
+            self._throttle_request()
+            status, data = self.imap.fetch(",".join(email_ids), "(UID)")
+            if status != "OK":
+                return None
+            uid_map = {}
+            for item in data:
+                match = re.match(rb'(\d+) \(UID (\d+)\)', item if isinstance(item, bytes) else b"")
+                if match:
+                    uid_map[match.group(1).decode()] = match.group(2).decode()
+            return uid_map
+        except Exception as e:
+            self.logger.warning(f"Could not fetch UIDs: {e}")
+            return None
+
+    def get_all_uids(self) -> Optional[set]:
+        """UIDs of every email in the selected folder; None if the search fails"""
+        try:
+            self._throttle_request()
+            status, data = self.imap.uid("SEARCH", None, "ALL")
+            if status != "OK":
+                return None
+            return {uid.decode() for uid in data[0].split()}
+        except Exception as e:
+            self.logger.warning(f"Could not list UIDs: {e}")
+            return None
 
     def get_email_ids(self, search_criteria: str = "ALL") -> List[str]:
         """Get list of email IDs based on search criteria"""

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 from ..config import ConfigManager
 from .email_client import EmailClient
+from . import decided_index
 from ..llm import LLMClassifier
 from ..ml import MLClassifier
 from ..filters import ListManager
@@ -144,10 +145,20 @@ class EmailProcessor:
             # Get unread emails (or all emails for initial scan) using safe method
             email_ids = client.get_email_ids("UNSEEN")  # Only unread emails
             email_ids.reverse()
-            self.logger.info(f"Found {len(email_ids)} unread emails in {account_name}/{folder}")
+
+            # Unread emails already kept by a final verdict are skipped before any
+            # download. Without UIDs (FETCH failed) every email is judged as before.
+            uid_map = client.get_uid_map(email_ids) or {}
+            decided = decided_index.load(account_name, folder, client.uidvalidity)
+            already = sum(1 for i in email_ids if uid_map.get(i) in decided)
+            self.logger.info(f"Found {len(email_ids)} unread emails in {account_name}/{folder}"
+                             f" ({already} already decided)")
 
             # Process each email
             for email_id in email_ids:
+                uid = uid_map.get(email_id)
+                if uid in decided:
+                    continue
                 try:
                     email_data = client.fetch_email(email_id)
                     if not email_data:
@@ -192,6 +203,8 @@ class EmailProcessor:
                             results["spam_moved"] += 1
                             self._register_llm_spam(email_data, decision, email_fingerprint, raw_message_for_shadow)
                     # Kept emails need nothing: they were read with BODY.PEEK[] and stay unread.
+                    elif uid and self._is_final_decision(decision):
+                        decided.add(uid)
 
                     # Log the decision
                     self._log_decision(email_data, decision)
@@ -231,6 +244,8 @@ class EmailProcessor:
                     self.logger.error(f"[account: {account}] Error processing email {email_id}: {e}")
                     results["errors"] += 1
                     self.stats_manager.record_error("email_processing")
+
+            self._save_decided(client, account_name, folder, decided)
 
         except Exception as e:
             self.logger.error(f"Error processing account {account_name}: {e}")
@@ -784,6 +799,30 @@ class EmailProcessor:
             self.logger.error(f"Error loading LLM cache: {e}")
             # Continue with empty cache on error
             self.processed_emails_cache = {}
+
+    def _is_final_decision(self, decision: Dict[str, Any]) -> bool:
+        """Whether a KEEP verdict is final: the email will never be judged again."""
+        method = decision.get("method", "")
+        # Only real verdicts. Fallbacks (llm_*_error, llm_unavailable, ml_unavailable,
+        # ml_error, default) kept the email for lack of a verdict: judge it again.
+        return method in {
+            "ml_random_forest",
+            "llm_mistralai", "llm_openai", "llm_anthropic",
+            "user_feedback",
+            "whitelist",
+        }
+
+    def _save_decided(self, client: EmailClient, account_name: str, folder: str, decided: set):
+        """Persist the final-verdict UIDs, pruned to those still in the folder.
+        Non-blocking: on failure the emails are simply judged again next cycle.
+        """
+        try:
+            present = client.get_all_uids()
+            if present is not None:
+                decided &= present
+            decided_index.save(account_name, folder, client.uidvalidity, decided)
+        except Exception as e:
+            self.logger.warning(f"[account: {account_name}] Could not save decided UIDs (non-blocking): {e}")
 
     def _save_cache(self):
         """Save LLM cache to disk if enabled"""
