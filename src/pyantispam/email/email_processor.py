@@ -9,6 +9,7 @@ from typing import List, Dict, Any, Optional
 from ..config import ConfigManager
 from .email_client import EmailClient
 from . import decided_index
+from ..llm import recipient_history
 from ..llm import LLMClassifier
 from ..ml import MLClassifier
 from ..filters import ListManager
@@ -231,6 +232,12 @@ class EmailProcessor:
                     if self.ml_classifier.is_available():
                         self._log_ml_shadow(email_data, decision, email_fingerprint)
 
+                    # LLM verdict with the recipient's history on the sender: observe only.
+                    if (raw_message_for_shadow and decision.get("method") == "llm_mistralai"
+                            and self.config.get("llm.history_shadow", False)):
+                        self._log_llm_history_shadow(email_data, decision, email_fingerprint,
+                                                     raw_message_for_shadow)
+
                     results["details"].append({
                         "email_id": email_id,
                         "subject": email_data.get("subject", "")[:50],
@@ -449,6 +456,54 @@ class EmailProcessor:
             self._mark_logged(email_fingerprint, action, method, index)
         except Exception as e:
             self.logger.warning(f"Could not log ML shadow score (non-blocking): {e}")
+
+    def _log_llm_history_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
+                                email_fingerprint: str, raw_message: bytes):
+        """Ask Mistral again with the recipient's history on the sender's domain
+        (llm/recipient_history.py) and log it beside the real LLM verdict. Only when
+        rspamd verified the sender's domain and there is history; otherwise the
+        record notes why, without an API call. Peek, score, write, then mark.
+        """
+        index = Path("data/logs/llm_history_shadow_seen.json")
+        try:
+            action = decision.get("action")
+            method = decision.get("method")
+            if self._peek_logged(email_fingerprint, action, method, index):
+                return
+
+            verdict = self.rspamd_shadow.check(raw_message)
+            if verdict is None:
+                return  # rspamd unavailable: retried next cycle
+            verified = recipient_history.is_verified(
+                email_data, verdict.get("dkim_domains") or [], verdict.get("dmarc_domain"))
+            line = recipient_history.history_line(email_data) if verified else ""
+
+            shadow = None
+            if line:
+                shadow = self.llm_classifier.classify_with_history(email_data, line)
+                if shadow is None or shadow.get("method") != "llm_mistralai":
+                    return  # Mistral unavailable or errored: retried next cycle
+
+            log_path = Path("data/logs/llm_history_shadow_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                "timestamp": time.time(),
+                "fingerprint": email_fingerprint,
+                "account": email_data.get("account_name", "unknown"),
+                "sender_email": email_data.get("sender_email", ""),
+                "real_action": action,
+                "real_confidence": decision.get("confidence"),
+                "verified": verified,
+                "history": line,
+                "shadow_action": shadow["action"] if shadow else action,
+                "shadow_confidence": shadow["confidence"] if shadow else None,
+                "shadow_reason": shadow["reason"] if shadow else None,
+            }
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._mark_logged(email_fingerprint, action, method, index)
+        except Exception as e:
+            self.logger.warning(f"Could not log LLM history shadow (non-blocking): {e}")
 
     def _log_embedding_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any], email_fingerprint: str):
         """Log the embedding model's spam probability beside the real decision.

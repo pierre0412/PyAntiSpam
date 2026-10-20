@@ -64,10 +64,17 @@ class RspamdShadowClassifier:
                 key=lambda s: -abs(s["score"]),
             )[:5]
 
+            # Domains rspamd verified for this message (options look like
+            # "picard.fr:s=selector" and ["picard.fr", "quarantine"]).
+            dkim = symbols.get("R_DKIM_ALLOW", {}).get("options") or []
+            dmarc = symbols.get("DMARC_POLICY_ALLOW", {}).get("options") or []
+
             return {
                 "score": result.get("score"),
                 "action": result.get("action"),
                 "top_symbols": top_symbols,
+                "dkim_domains": [str(o).split(":")[0].strip().lower() for o in dkim],
+                "dmarc_domain": str(dmarc[0]).strip().lower() if dmarc else None,
             }
         except Exception as e:
             self.logger.debug(f"rspamd shadow check failed (non-blocking): {e}")

@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 import json
 
 if TYPE_CHECKING:
@@ -23,6 +23,43 @@ try:
     from mistralai.client import Mistral
 except ImportError:
     Mistral = None
+
+
+MISTRAL_SYSTEM_PROMPT = (
+        "You are an expert email security analyst. Output JSON only (minified, one object), no extra text, no markdown, no code fences (do not wrap the JSON in ```).\n"
+        "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
+        "SPAM INDICATORS (be aggressive on detection):\n"
+        "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
+        "brand impersonation (banks, social media, services), suspicious authentication requests\n"
+        "• MALWARE/VIRUS: suspicious attachments (.exe, .zip, .scr), shortened/suspicious URLs, "
+        "download prompts, fake software updates, malicious redirects\n"
+        "• MARKETING/COMMERCIAL: unsolicited newsletters, promotional blasts, sales pitches, "
+        "unsubscribe from unknown lists, bulk commercial content, affiliate marketing\n"
+        "• SCAMS: money transfers, crypto schemes, inheritance scams, lottery wins, "
+        "investment opportunities, romance scams, fake charities\n"
+        "• SOCIAL ENGINEERING: urgent action required, fear tactics, authority impersonation, "
+        "personal info requests, pressure to click/download/respond quickly\n"
+        "• TECHNICAL: domain spoofing, reply-to mismatches, poor SPF/DKIM, suspicious headers\n"
+        "• DOMAIN SPOOFING: brand mentions in subject/content but sender domain doesn't match "
+        "(e.g., 'OVH' email from ovhcloud@gmail.com, 'Crédit Agricole' from creditagrlcole.fr)\n\n"
+        "LEGITIMATE indicators: transactional emails from known services, expected communications, "
+        "proper authentication, recognized brands with matching domains.\n\n"
+        "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
+        "Examples: {\"is_spam\":true,\"confidence\":0.95,\"reason\":\"Phishing: fake bank login with urgent tone\"} "
+        "| {\"is_spam\":true,\"confidence\":0.87,\"reason\":\"Marketing: unsolicited promotional blast\"}"
+)
+
+# Shadow variant (llm.history_shadow): same prompt, plus how to read the
+# recipient's own verdicts on the sender (llm/recipient_history.py).
+HISTORY_RULE = (
+    "RECIPIENT HISTORY: a 'Recipient history' line, when present, counts the emails from this sender "
+    "domain that the recipient personally marked as legitimate or spam (sender authentication verified). "
+    "If the recipient marked emails from this domain as legitimate and none as spam, and there is no sign "
+    "of phishing, malware, scam or social engineering in this email, mark it as legitimate. "
+    "Without this line, the recipient has never reviewed this sender.\n"
+)
+_STRICT_LINE = "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
+MISTRAL_HISTORY_PROMPT = MISTRAL_SYSTEM_PROMPT.replace(_STRICT_LINE, HISTORY_RULE + _STRICT_LINE)
 
 
 class LLMClassifier:
@@ -111,6 +148,15 @@ class LLMClassifier:
             "confidence": 0.5,
             "method": "llm_error"
         }
+
+    def classify_with_history(self, email_data: Dict[str, Any], history: str) -> Optional[Dict[str, Any]]:
+        """Shadow only: Mistral verdict with the recipient's history line added.
+        None when Mistral is not the configured provider or not available."""
+        provider = self.config.get("llm.provider", "openai").lower()
+        if provider not in ("mistral", "mistralai") or not self.mistral_client:
+            return None
+        email_text = self._prepare_email_text(email_data) + f"\n{history}"
+        return self._classify_with_mistralai(email_text, email_data, MISTRAL_HISTORY_PROMPT)
 
     @staticmethod
     def _strip_code_fences(text: str) -> str:
@@ -394,34 +440,13 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 "method": "llm_anthropic_error"
             }
 
-    def _classify_with_mistralai(self, email_text: str, email_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _classify_with_mistralai(self, email_text: str, email_data: Dict[str, Any],
+                                 system_prompt: Optional[str] = None) -> Dict[str, Any]:
         """Classify using MistralAI API"""
         try:
             model = self.config.get("llm.model", "mistral-medium-latest")
 
-            system_prompt = (
-                "You are an expert email security analyst. Output JSON only (minified, one object), no extra text, no markdown, no code fences (do not wrap the JSON in ```).\n"
-                "Schema: {\"is_spam\": boolean, \"confidence\": number 0..1, \"reason\": string}.\n\n"
-                "SPAM INDICATORS (be aggressive on detection):\n"
-                "• PHISHING: fake login pages, account suspension threats, urgent security alerts, credential harvesting, "
-                "brand impersonation (banks, social media, services), suspicious authentication requests\n"
-                "• MALWARE/VIRUS: suspicious attachments (.exe, .zip, .scr), shortened/suspicious URLs, "
-                "download prompts, fake software updates, malicious redirects\n"
-                "• MARKETING/COMMERCIAL: unsolicited newsletters, promotional blasts, sales pitches, "
-                "unsubscribe from unknown lists, bulk commercial content, affiliate marketing\n"
-                "• SCAMS: money transfers, crypto schemes, inheritance scams, lottery wins, "
-                "investment opportunities, romance scams, fake charities\n"
-                "• SOCIAL ENGINEERING: urgent action required, fear tactics, authority impersonation, "
-                "personal info requests, pressure to click/download/respond quickly\n"
-                "• TECHNICAL: domain spoofing, reply-to mismatches, poor SPF/DKIM, suspicious headers\n"
-                "• DOMAIN SPOOFING: brand mentions in subject/content but sender domain doesn't match "
-                "(e.g., 'OVH' email from ovhcloud@gmail.com, 'Crédit Agricole' from creditagrlcole.fr)\n\n"
-                "LEGITIMATE indicators: transactional emails from known services, expected communications, "
-                "proper authentication, recognized brands with matching domains.\n\n"
-                "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
-                "Examples: {\"is_spam\":true,\"confidence\":0.95,\"reason\":\"Phishing: fake bank login with urgent tone\"} "
-                "| {\"is_spam\":true,\"confidence\":0.87,\"reason\":\"Marketing: unsolicited promotional blast\"}"
-            )
+            system_prompt = system_prompt or MISTRAL_SYSTEM_PROMPT
             user_prompt = (
                 "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
                 f"{email_text}\n\n"
