@@ -19,6 +19,33 @@ if TYPE_CHECKING:
     from ..config import ConfigManager
 
 
+# rspamd symbol -> verdict, per mechanism; anything else is "none" (absent or not checked).
+_DKIM = {"R_DKIM_ALLOW": "pass", "R_DKIM_REJECT": "fail", "R_DKIM_PERMFAIL": "fail", "R_DKIM_TEMPFAIL": "fail"}
+_DMARC = {"DMARC_POLICY_ALLOW": "pass", "DMARC_POLICY_ALLOW_WITH_FAILURES": "pass",
+          "DMARC_POLICY_REJECT": "fail", "DMARC_POLICY_QUARANTINE": "fail", "DMARC_POLICY_SOFTFAIL": "fail"}
+# Without the connecting IP (we post the stored message), rspamd's SPF is mostly "none".
+_SPF = {"R_SPF_ALLOW": "pass", "R_SPF_FAIL": "fail", "R_SPF_SOFTFAIL": "softfail"}
+
+
+def auth_summary(symbols: Dict[str, Any]) -> Dict[str, Any]:
+    """What rspamd verified about the sender, small enough to store with the email:
+    {"dkim", "dmarc", "spf": "pass"|"fail"|"softfail"|"none", "dkim_domains", "dmarc_domain"}.
+    Options look like "picard.fr:s=selector" (DKIM) and ["picard.fr", "quarantine"] (DMARC)."""
+    def verdict(table: Dict[str, str]) -> str:
+        found = [v for name, v in table.items() if name in symbols]
+        return "pass" if "pass" in found else (found[0] if found else "none")
+
+    dkim = symbols.get("R_DKIM_ALLOW", {}).get("options") or []
+    dmarc = symbols.get("DMARC_POLICY_ALLOW", {}).get("options") or []
+    return {
+        "dkim": verdict(_DKIM),
+        "dmarc": verdict(_DMARC),
+        "spf": verdict(_SPF),
+        "dkim_domains": [str(o).split(":")[0].strip().lower() for o in dkim],
+        "dmarc_domain": str(dmarc[0]).strip().lower() if dmarc else None,
+    }
+
+
 class RspamdShadowClassifier:
     """Calls rspamd's /checkv2 and returns its verdict, read-only."""
 
@@ -64,21 +91,26 @@ class RspamdShadowClassifier:
                 key=lambda s: -abs(s["score"]),
             )[:5]
 
-            # Domains rspamd verified for this message (options look like
-            # "picard.fr:s=selector" and ["picard.fr", "quarantine"]).
-            dkim = symbols.get("R_DKIM_ALLOW", {}).get("options") or []
-            dmarc = symbols.get("DMARC_POLICY_ALLOW", {}).get("options") or []
-
             return {
                 "score": result.get("score"),
                 "action": result.get("action"),
                 "top_symbols": top_symbols,
-                "dkim_domains": [str(o).split(":")[0].strip().lower() for o in dkim],
-                "dmarc_domain": str(dmarc[0]).strip().lower() if dmarc else None,
+                "auth": auth_summary(symbols),
             }
         except Exception as e:
             self.logger.debug(f"rspamd shadow check failed (non-blocking): {e}")
             return None
+
+    def attach_auth(self, email_data: Dict[str, Any], raw_message: Optional[bytes]) -> Optional[Dict[str, Any]]:
+        """Score the message and store rspamd's authentication verdict in
+        email_data["rspamd_auth"], so it travels with the email into the
+        prediction record, the tacit-confirmation queue and training_data (future
+        RF features). Observation only: nothing reads it to decide. Returns the
+        full verdict (reused by the shadow logs), or None if rspamd is unavailable."""
+        verdict = self.check(raw_message) if raw_message else None
+        if verdict:
+            email_data["rspamd_auth"] = verdict["auth"]
+        return verdict
 
     def learn_spam(self, raw_message: bytes) -> bool:
         """Teach rspamd this message is spam. Only call this from real human

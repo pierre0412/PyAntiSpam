@@ -47,9 +47,12 @@ def _sender_domain(email_data: Dict[str, Any]) -> str:
             or (email_data.get("sender_email") or "").split("@")[-1]).lower()
 
 
-def is_verified(email_data: Dict[str, Any], dkim_domains: Iterable[str],
-                dmarc_domain: Optional[str]) -> bool:
-    """True when rspamd validated DMARC or DKIM for the From's registrable domain."""
+def is_verified(email_data: Dict[str, Any]) -> bool:
+    """True when rspamd validated DMARC or DKIM for the From's registrable domain
+    (email_data["rspamd_auth"], set by RspamdShadowClassifier.attach_auth)."""
+    auth = email_data.get("rspamd_auth") or {}
+    dkim_domains: Iterable[str] = auth.get("dkim_domains") or []
+    dmarc_domain: Optional[str] = auth.get("dmarc_domain")
     dom = base_domain(_sender_domain(email_data))
     if not dom:
         return False

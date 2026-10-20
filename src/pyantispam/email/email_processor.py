@@ -10,6 +10,7 @@ from ..config import ConfigManager
 from .email_client import EmailClient
 from . import decided_index
 from ..llm import recipient_history
+from ..filters import lookalike
 from ..llm import LLMClassifier
 from ..ml import MLClassifier
 from ..filters import ListManager
@@ -29,6 +30,7 @@ class EmailProcessor:
         self.llm_classifier = LLMClassifier(config_manager)
         self.ml_classifier = MLClassifier(config_manager)
         self.rspamd_shadow = RspamdShadowClassifier(config_manager)
+        self._validated_domains = None  # lookalike shadow: read once per cycle
         self.embedding_shadow = EmbeddingShadowClassifier(config_manager)
         self.lists_shadow = bool(config_manager.get("lists.shadow", False))
         self._last_list_verdict = None
@@ -176,6 +178,10 @@ class EmailProcessor:
                     raw_message_for_shadow = (
                         client.fetch_raw_message(email_id) if self.rspamd_shadow.is_enabled() else None
                     )
+                    # One rspamd call per email, before the decision but never used by it:
+                    # stores the authentication verdict with the email (future RF features)
+                    # and is reused by the shadow logs below.
+                    rspamd_verdict = self.rspamd_shadow.attach_auth(email_data, raw_message_for_shadow)
 
                     # Process email through spam detection pipeline
                     start_time = time.time()
@@ -219,7 +225,8 @@ class EmailProcessor:
                     # logged for future calibration, never influences the decision
                     # above (already final and already applied).
                     if raw_message_for_shadow:
-                        self._log_rspamd_shadow(email_data, decision, email_fingerprint, raw_message_for_shadow)
+                        self._log_rspamd_shadow(email_data, decision, email_fingerprint, raw_message_for_shadow,
+                                                rspamd_verdict)
 
                     # Same discipline for the embedding model: observe only.
                     if self.embedding_shadow.is_enabled():
@@ -232,11 +239,14 @@ class EmailProcessor:
                     if self.ml_classifier.is_available():
                         self._log_ml_shadow(email_data, decision, email_fingerprint)
 
+                    # Sender domain imitating one the recipient validated: observe only.
+                    if self.config.get("detection.lookalike_shadow", True):
+                        self._log_lookalike_shadow(email_data, decision, email_fingerprint)
+
                     # LLM verdict with the recipient's history on the sender: observe only.
                     if (raw_message_for_shadow and decision.get("method") == "llm_mistralai"
                             and self.config.get("llm.history_shadow", False)):
-                        self._log_llm_history_shadow(email_data, decision, email_fingerprint,
-                                                     raw_message_for_shadow)
+                        self._log_llm_history_shadow(email_data, decision, email_fingerprint)
 
                     results["details"].append({
                         "email_id": email_id,
@@ -457,8 +467,46 @@ class EmailProcessor:
         except Exception as e:
             self.logger.warning(f"Could not log ML shadow score (non-blocking): {e}")
 
+    def _log_lookalike_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
+                              email_fingerprint: str):
+        """Log emails whose sender domain imitates a validated one (filters/lookalike.py),
+        beside the real decision. Local and cheap; validated domains read once per cycle."""
+        index = Path("data/logs/lookalike_shadow_seen.json")
+        try:
+            if self._validated_domains is None:
+                self._validated_domains = lookalike.validated_domains()
+            sender_domain = email_data.get("sender_domain") or (email_data.get("sender_email") or "").split("@")[-1]
+            hit = lookalike.find_lookalike(sender_domain, self._validated_domains)
+            if not hit:
+                return
+            action = decision.get("action")
+            method = decision.get("method")
+            if self._peek_logged(email_fingerprint, action, method, index):
+                return
+
+            log_path = Path("data/logs/lookalike_shadow_log.jsonl")
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            auth = email_data.get("rspamd_auth") or {}
+            record = {
+                "timestamp": time.time(),
+                "fingerprint": email_fingerprint,
+                "account": email_data.get("account_name", "unknown"),
+                "sender_email": email_data.get("sender_email", ""),
+                "imitates": hit[0],
+                "kind": hit[1],
+                "dkim": auth.get("dkim"),
+                "dmarc": auth.get("dmarc"),
+                "real_action": action,
+                "real_method": method,
+            }
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._mark_logged(email_fingerprint, action, method, index)
+        except Exception as e:
+            self.logger.warning(f"Could not log lookalike shadow (non-blocking): {e}")
+
     def _log_llm_history_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
-                                email_fingerprint: str, raw_message: bytes):
+                                email_fingerprint: str):
         """Ask Mistral again with the recipient's history on the sender's domain
         (llm/recipient_history.py) and log it beside the real LLM verdict. Only when
         rspamd verified the sender's domain and there is history; otherwise the
@@ -471,11 +519,9 @@ class EmailProcessor:
             if self._peek_logged(email_fingerprint, action, method, index):
                 return
 
-            verdict = self.rspamd_shadow.check(raw_message)
-            if verdict is None:
-                return  # rspamd unavailable: retried next cycle
-            verified = recipient_history.is_verified(
-                email_data, verdict.get("dkim_domains") or [], verdict.get("dmarc_domain"))
+            if "rspamd_auth" not in email_data:
+                return  # rspamd unavailable this cycle: retried next cycle
+            verified = recipient_history.is_verified(email_data)
             line = recipient_history.history_line(email_data) if verified else ""
 
             shadow = None
@@ -715,6 +761,7 @@ class EmailProcessor:
     def _log_rspamd_shadow(
         self, email_data: Dict[str, Any], decision: Dict[str, Any],
         email_fingerprint: str, raw_message: bytes,
+        verdict: Optional[Dict[str, Any]] = None,
     ):
         """rspamd "mode fantôme" (roadmap étape 2): score this email with rspamd
         purely for observation, side by side with the real decision, to later
@@ -738,7 +785,7 @@ class EmailProcessor:
             if self._peek_logged(email_fingerprint, action, method, shadow_index):
                 return
 
-            verdict = self.rspamd_shadow.check(raw_message)
+            verdict = verdict or self.rspamd_shadow.check(raw_message)
             if verdict is None:
                 return  # rspamd unavailable/failed this time - retried next cycle
 

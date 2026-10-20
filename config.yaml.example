@@ -40,6 +40,7 @@ detection:
   use_llm_for_uncertain: true      # false: uncertain emails are kept
   classify_marketing_as_spam: false     # Hand-written marketing rule (fixed weights, never learned).
   marketing_confidence_threshold: 0.6   # Disabled by default: it misfiled supplier mails as spam.
+  lookalike_shadow: true           # Log senders imitating a domain you validated (lookalike_shadow_log.jsonl), never acts.
 
 # Whitelist / blacklist (data/whitelist.json, data/blacklist.json)
 lists:

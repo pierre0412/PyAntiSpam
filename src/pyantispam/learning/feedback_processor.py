@@ -303,6 +303,8 @@ class FeedbackProcessor:
                     raw_message = (
                         client.fetch_raw_message(email_id) if self.rspamd_shadow.is_enabled() else None
                     )
+                    # Authentication verdict stored with the training sample (future RF features).
+                    self.rspamd_shadow.attach_auth(email_data, raw_message)
 
                     # Process feedback based on folder type
                     feedback_result = self._process_single_feedback(
