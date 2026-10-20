@@ -2,8 +2,10 @@
 
 A phishing text written by an LLM is flawless, but its sender domain still
 has to differ from the real one: creditagrlcole.fr, sonepar-fr.com,
-sonepar.com next to sonepar.fr. The reference list is the recipient's own
-validations (sender_feedback_history.json: some ham, no spam), so it grows
+sonepar.com next to sonepar.fr. Brands themselves vary the structure (other
+extension, hyphen, extra word: societegenerale.com, e-ca-pca.fr), never the
+letters: only altered letters (typo, homoglyph) are STRONG. The reference
+list is the recipient's own validations (sender_feedback_history.json: some ham, no spam), so it grows
 with every correction. A domain that only looks like itself is never flagged.
 """
 
@@ -41,8 +43,11 @@ def _label(domain: str) -> str:
     return domain.split(".")[0]
 
 
+# Kinds brands never use for their own domains; the others are logged as siblings.
+STRONG_KINDS = {"homoglyph", "typo"}
+
+
 def _fold(label: str) -> str:
-    label = label.replace("-", "")
     for src, dst in _HOMOGLYPHS:
         label = label.replace(src, dst)
     return label
@@ -71,27 +76,46 @@ def is_typo(sender_label: str, known_label: str) -> bool:
     return len(known_label) >= 5 and edit_distance(sender_label, known_label) == 1
 
 
+def _kind(label: str, known: str) -> Optional[str]:
+    """How label imitates known, structure variations checked first."""
+    plain, known_plain = label.replace("-", ""), known.replace("-", "")
+    if label == known:
+        return "tld"
+    if plain == known_plain:
+        return "hyphen"
+    def has_word(longer: str, shorter: str) -> bool:
+        return (longer.startswith(shorter + "-") or longer.endswith("-" + shorter)
+                or f"-{shorter}-" in longer or shorter.replace("-", "") in longer.split("-"))
+
+    if has_word(label, known) or has_word(known, label):  # a word added or removed
+        return "contains"
+    if _fold(plain) == _fold(known_plain):
+        return "homoglyph"
+    if is_typo(plain, known_plain):
+        return "typo"
+    return None
+
+
 def find_lookalike(sender_domain: str, validated: Iterable[str]) -> Optional[Tuple[str, str]]:
-    """(validated domain imitated, kind) or None. Kinds: "tld" (same name, other
-    extension), "homoglyph" (equal once look-alike characters are folded),
-    "contains" (the known name plus extra words), "typo" (near-miss spelling)."""
+    """(validated domain imitated, kind) or None, a STRONG kind preferred.
+    Structure kinds: "tld" (same name, other extension), "hyphen", "contains"
+    (the known name plus extra words). Strong kinds: "homoglyph" (equal once
+    look-alike characters are folded), "typo" (one letter off)."""
     dom = base_domain(sender_domain)
     if not dom or dom in SHARED_SENDER_DOMAINS:
         return None
+    validated = set(validated)
+    if dom in validated:
+        return None  # the sender is itself a validated domain
     label = _label(dom)
-    for known in validated:
-        if known == dom:
-            return None  # the sender is itself a validated domain
+    weak = None
     for known in sorted(validated):
         k = _label(known)
-        if len(k) < 4:
+        if len(k.replace("-", "")) < 4:
             continue  # too short to tell imitation from coincidence (ca.fr, sfr.fr)
-        if label == k:
-            return known, "tld"
-        if _fold(label) == _fold(k):
-            return known, "homoglyph"
-        if k in label.split("-") or label.startswith(k + "-") or label.endswith("-" + k):
-            return known, "contains"
-        if is_typo(label, k):
-            return known, "typo"
-    return None
+        kind = _kind(label, k)
+        if kind in STRONG_KINDS:
+            return known, kind
+        if kind and weak is None:
+            weak = (known, kind)
+    return weak

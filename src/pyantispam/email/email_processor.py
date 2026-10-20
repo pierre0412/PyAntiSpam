@@ -494,6 +494,7 @@ class EmailProcessor:
                 "sender_email": email_data.get("sender_email", ""),
                 "imitates": hit[0],
                 "kind": hit[1],
+                "strong": hit[1] in lookalike.STRONG_KINDS,
                 "dkim": auth.get("dkim"),
                 "dmarc": auth.get("dmarc"),
                 "real_action": action,
