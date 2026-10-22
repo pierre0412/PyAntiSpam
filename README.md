@@ -167,6 +167,7 @@ Ces scripts sont en lecture seule. Ils se lancent depuis le dossier qui contient
 | Script | Rôle |
 |---|---|
 | `live_eval.py` | Mesure sur le trafic réel : votre reclassement fait foi, sinon la décision est tenue pour juste. Compare PyAntiSpam, Random Forest, CamemBERT, leur moyenne et le LLM. `--depuis "AAAA-MM-JJ HH:MM"` donne une série par tranches. |
+| `daily_report.py` | Point quotidien : part du LLM, confirmations tacites en attente, corpus, corrections, erreurs, et les fantômes « LLM + historique » (désaccords comparés à vos corrections) et « sosies ». `--depuis "AAAA-MM-JJ HH:MM"` (défaut : dernières 24 h). |
 | `shadow_report.py` | Désaccords PyAntiSpam / CamemBERT, avec les verdicts relus à la main (`data/human_verdicts.json`). |
 | `split_eval.py` | Validation croisée groupée par domaine expéditeur sur `training_data.json` : paramètres d'en-tête contre contenu contre CamemBERT. |
 
