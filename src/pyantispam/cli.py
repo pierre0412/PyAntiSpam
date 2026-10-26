@@ -85,7 +85,8 @@ def setup_logging(config_manager: ConfigManager, verbose: bool = False):
 
 
 @click.group()
-@click.option('--config', '-c', default="config.yaml", help="Configuration file path")
+@click.option('--config', '-c', default="config.yaml", envvar="PYANTISPAM_CONFIG",
+              help="Configuration file path (or PYANTISPAM_CONFIG)")
 @click.option('--verbose', '-v', is_flag=True, help="Enable verbose logging")
 @click.pass_context
 def main(ctx, config: str, verbose: bool):

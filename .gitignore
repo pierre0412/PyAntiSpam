@@ -3,6 +3,7 @@
 __pycache__/
 CLAUDE.md
 config.yaml
+config/
 data/
 .claude/
 .idea/

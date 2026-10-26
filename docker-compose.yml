@@ -10,6 +10,7 @@ services:
     environment:
       - PYTHONPATH=/app
       - TZ=Europe/Paris
+      - PYANTISPAM_CONFIG=/app/config/config.yaml
 
     # Fichier .env pour les clés API et mots de passe
     env_file:
@@ -20,8 +21,9 @@ services:
 
     # Volumes persistants pour données et configuration
     volumes:
-      # Configuration (lecture seule)
-      - ./config.yaml:/app/config.yaml:ro
+      # Configuration (lecture seule). Le dossier, pas le fichier : un fichier
+      # remplacé sur l'hôte (sed -i, éditeurs) reste visible du conteneur.
+      - ./config:/app/config:ro
       - ./.env:/app/.env:ro
 
       # Données persistantes (lecture/écriture) - inclut data/logs/

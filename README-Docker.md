@@ -19,7 +19,7 @@ Limites de ressources de `pyantispam` : 2 Go de mémoire et 2 CPU. CamemBERT occ
 
 | Hôte | Conteneur | |
 |---|---|---|
-| `./config.yaml` | `/app/config.yaml` | lecture seule |
+| `./config/` | `/app/config` | lecture seule, contient `config.yaml` (lu via `PYANTISPAM_CONFIG`) |
 | `./.env` | `/app/.env` | lecture seule, chargé aussi comme `env_file` |
 | `./data/` | `/app/data` | tout l'état : modèles, exemples, listes, cache, journaux, cache CamemBERT (`hf_cache/`) |
 | `./docker/rspamd/local.d/` | `/etc/rspamd/local.d` | configuration rspamd, lecture seule |
@@ -30,7 +30,7 @@ Le code est **copié dans l'image**, il n'est pas monté. Tout changement de cod
 ## Mise en place
 
 ```bash
-cp config.yaml.example config.yaml
+mkdir -p config && cp config.yaml.example config/config.yaml
 cp .env.example .env                       # mots de passe IMAP, clé LLM, RSPAMD_PASSWORD
 cp docker/rspamd/local.d/worker-controller.inc.example docker/rspamd/local.d/worker-controller.inc
 mkdir -p data
@@ -64,12 +64,14 @@ Seul `pyantispam` redémarre. rspamd, redis et unbound ne sont pas touchés.
 
 ### Changer `config.yaml`
 
-`config.yaml` est monté seul. Un éditeur qui remplace le fichier, comme `sed -i`, n'est pas vu par le conteneur en marche. Il faut recréer le conteneur :
+Modifier `config/config.yaml` sur l'hôte. Le dossier est monté, donc le conteneur voit tout de suite le fichier, même remplacé par un éditeur ou `sed -i`. Le daemon ne lit sa configuration qu'au démarrage : un redémarrage suffit, sans reconstruction.
 
 ```bash
-docker compose up -d --force-recreate pyantispam
-docker exec pyantispam grep -n "la_clé" /app/config.yaml     # vérifier la valeur lue
+docker compose restart pyantispam
+docker compose exec pyantispam grep -n "la_clé" /app/config/config.yaml     # vérifier la valeur lue
 ```
+
+`.env` n'est lu qu'à la création du conteneur : après l'avoir modifié, `docker compose up -d --force-recreate pyantispam`.
 
 ## Utilisateur du conteneur
 
