@@ -447,6 +447,9 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
             model = self.config.get("llm.model", "mistral-medium-latest")
 
             system_prompt = system_prompt or MISTRAL_SYSTEM_PROMPT
+            # Reasoning models (mistral-large-4) think before answering by default:
+            # "none" answers directly (~1.5 s, ~70 tokens instead of ~25 s, ~2,000).
+            reasoning_effort = self.config.get("llm.reasoning_effort")
             user_prompt = (
                 "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
                 f"{email_text}\n\n"
@@ -462,10 +465,19 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 response_format={"type": "json_object"},
                 stream=False,
                 temperature=0.1,
-                max_tokens=400
+                max_tokens=400,
+                **({"reasoning_effort": reasoning_effort} if reasoning_effort else {})
             )
 
-            result_text = response.choices[0].message.content.strip()
+            content = response.choices[0].message.content
+            if isinstance(content, list):
+                # Reasoning models answer in chunks (thinking, then text): keep the text.
+                content = "".join(getattr(c, "text", "") for c in content if getattr(c, "type", "") == "text")
+            result_text = (content or "").strip()
+            if not result_text:
+                # e.g. a reasoning model spent max_tokens thinking: an error is retried
+                # next cycle, whereas a parsed empty answer would be a final KEEP.
+                raise ValueError("empty answer (reasoning used up max_tokens? set llm.reasoning_effort)")
 
             # Try to parse JSON response (stripping markdown fences some models add despite instructions)
             try:

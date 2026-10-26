@@ -401,8 +401,10 @@ class EmailProcessor:
             # LLM verdicts are never used for training: the models learn only
             # from the user's own reclassifications (feedback folders).
             llm_result = self._llm_classify(email_data)
-            self.processed_emails_cache[email_fingerprint] = llm_result.copy()
-            self._save_cache()
+            # Only real verdicts: a cached error would answer every retry with the same error.
+            if not llm_result.get("method", "").endswith(("_error", "_unavailable")):
+                self.processed_emails_cache[email_fingerprint] = llm_result.copy()
+                self._save_cache()
             return llm_result
 
         # Default: keep email if uncertain
@@ -886,6 +888,10 @@ class EmailProcessor:
                             expired_entries += 1
                             continue
                     
+                    # Errors cached by older versions: drop them so the email is asked again.
+                    if str(cache_entry.get("method", "")).endswith(("_error", "_unavailable")):
+                        continue
+
                     # Load the LLM result (remove timestamp for compatibility)
                     llm_result = cache_entry.copy()
                     llm_result.pop('timestamp', None)
