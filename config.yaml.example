@@ -84,6 +84,10 @@ rspamd:
   url: "http://rspamd:11334"       # Docker service name (docker-compose.yml)
   password_env: "RSPAMD_PASSWORD"
   timeout: 10                      # Seconds; a slow rspamd never blocks mail processing
+  # Your mail hosts' relay domains. The connecting IP is read from the Received
+  # headers they wrote (never from those below, which the sender can forge) and
+  # given to rspamd so it can check SPF. Empty: no IP, SPF stays unchecked.
+  trusted_relays: []               # e.g. ["o2switch.net", "free.fr", "proxad.net"]
 
 logging:
   # System log (all events)
