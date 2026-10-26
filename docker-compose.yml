@@ -54,9 +54,10 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # --- Étape 1 de la feuille de route rspamd : stack autonome, pas encore
-  # branchée au pipeline Python. On l'utilise pour l'instant en analysant des
-  # .eml à la main via /checkv2 (voir samples/).
+  # --- rspamd et ses dépendances. Le daemon l'interroge pour chaque mail
+  # (/checkv2 : score en mode fantôme, authentification SPF/DKIM/DMARC dans
+  # rspamd_auth) et lui apprend les reclassements (Bayes, stocké dans redis).
+  # Une panne de rspamd ne change aucune décision.
 
   redis:
     image: redis:8.4-alpine

@@ -34,3 +34,22 @@ chmod 0644 "$DEST"
 find "$DEST_DIR" -maxdepth 1 -name 'training_data-*.json' -mtime +"$KEEP_DAYS" -delete
 
 echo "sauvegarde : $DEST"
+
+# Bayes de rspamd (volume Docker redis-data) : il ne se reconstruit pas, les
+# mails bruts n'étant pas gardés. Au mieux : un échec ici (redis arrêté, pas de
+# Docker) n'annule pas la sauvegarde de training_data.json ci-dessus.
+backup_bayes() {
+    local before rdb="$DEST_DIR/rspamd-redis-$STAMP.rdb"
+    before="$(docker compose exec -T redis redis-cli LASTSAVE)" || return 1
+    docker compose exec -T redis redis-cli BGSAVE >/dev/null || return 1
+    for _ in $(seq 60); do
+        [ "$(docker compose exec -T redis redis-cli LASTSAVE)" != "$before" ] && break
+        sleep 1
+    done
+    docker compose cp redis:/data/dump.rdb "$rdb.tmp" || return 1
+    mv -f -- "$rdb.tmp" "$rdb"
+    chmod 0644 "$rdb"
+    find "$DEST_DIR" -maxdepth 1 -name 'rspamd-redis-*.rdb' -mtime +"$KEEP_DAYS" -delete
+    echo "sauvegarde Bayes rspamd : $rdb ($(stat -c %s "$rdb") octets)"
+}
+backup_bayes || echo "sauvegarde Bayes rspamd impossible (redis arrêté ?) ; training_data est sauvegardé" >&2

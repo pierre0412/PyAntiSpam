@@ -96,7 +96,27 @@ Puis remettez `data/` à votre nom (`sudo chown -R $(id -u):$(id -g) data`) avan
 
 Le journal va dans `data/backups/` et non dans `data/logs/`. Si le conteneur tourne en root, `data/logs/` lui appartient, et cron ne peut pas y écrire.
 
+Le même script copie aussi le Bayes de rspamd (`rspamd-redis-AAAAMMJJ.rdb`, volume Docker `redis-data`). Contrairement au Random Forest, il ne se réapprend pas : les mails bruts ne sont pas gardés. Si redis est arrêté, cette copie est sautée et `training_data.json` est sauvegardé quand même.
+
 Les copies restent sur la même machine. Pour une vraie sauvegarde, copiez aussi `data/` ailleurs.
+
+### Restaurer le Bayes de rspamd
+
+redis tourne avec `appendonly yes` : démarré sur un `dump.rdb` seul, il l'**ignore** et part vide. Il faut charger le RDB sans AOF, puis réactiver l'AOF à chaud :
+
+```bash
+B=data/backups/rspamd-redis-AAAAMMJJ.rdb
+docker compose stop rspamd redis
+docker compose run --rm --no-deps -v "$PWD/$B:/seed/dump.rdb:ro" --entrypoint sh redis \
+  -c "rm -rf /data/appendonlydir && cp /seed/dump.rdb /data/dump.rdb"
+docker compose run -d --no-deps --name redis-restore redis redis-server --appendonly no
+docker exec redis-restore redis-cli DBSIZE                       # doit être > 0
+docker exec redis-restore redis-cli CONFIG SET appendonly yes
+docker exec redis-restore redis-cli INFO persistence | grep aof_rewrite_in_progress   # attendre :0
+docker rm -f redis-restore
+docker compose up -d redis rspamd
+docker compose exec rspamd rspamc stat | grep BAYES              # compteurs retrouvés
+```
 
 ## Fuseau horaire
 
