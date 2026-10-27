@@ -8,8 +8,9 @@ Sections :
 - corpus (training_data.json), part des mails avec l'authentification rspamd ;
 - corrections de l'utilisateur (sender_feedback_history.json) ;
 - erreurs du journal (data/logs/pyantispam.log) ;
-- fantôme « LLM + historique » : désaccords, avec la correction de
-  l'utilisateur quand il y en a une (même empreinte, user_feedback) ;
+- fantôme « LLM + auth + historique + exemples » : désaccords avec le vrai LLM
+  (qui a l'historique), et la correction de l'utilisateur quand il y en a une
+  (même empreinte, user_feedback) ; bilan de l'ancien fantôme historique ;
 - fantôme « sosies » : alertes fortes et frères.
 
 Le compteur Bayes de rspamd n'est pas dans data/ :
@@ -134,24 +135,29 @@ def errors(since: float):
         print(f"  {n:3} × (dès {when(first[msg])}) {msg}")
 
 
-def history_shadow(since: float, feedback):
-    rows = load_jsonl(LOGS / "llm_history_shadow_log.jsonl")
+def llm_shadow(title: str, log_name: str, since: float, feedback, archived: bool = False):
+    rows = load_jsonl(LOGS / log_name)
+    if archived and not rows:
+        return
     asked = [r for r in rows if r.get("shadow_reason")]
-    print(f"\n== Fantôme LLM + historique : {len(rows)} lignes, {len(asked)} avec historique")
+    print(f"\n== {title} : {len(rows)} lignes, {len(asked)} jugées en fantôme")
     disagree = [r for r in asked if r["shadow_action"] != r["real_action"]]
     right = Counter()
-    print(f"  désaccords (depuis le début) : {len(disagree)}")
+    for r in disagree:
+        user = feedback.get(r["fingerprint"])
+        if user:
+            right["fantôme" if user == r["shadow_action"] else "vrai LLM"] += 1
+    print(f"  désaccords (depuis le début) : {len(disagree)} ; corrigés : {dict(right) or 'aucun'}")
+    if archived:
+        return
     for r in disagree:
         user = feedback.get(r["fingerprint"])
         verdict = "non corrigé"
         if user:
-            ok = user == r["shadow_action"]
-            right["fantôme" if ok else "vrai LLM"] += 1
-            verdict = f"utilisateur : {user} → {'fantôme' if ok else 'vrai LLM'} a raison"
+            verdict = f"utilisateur : {user} → {'fantôme' if user == r['shadow_action'] else 'vrai LLM'} a raison"
+        extra = f" ({r['n_examples']} ex.)" if r.get("n_examples") else ""
         print(f"  {when(r['timestamp'])} {r['account']:5} {r['sender_email']} réel {r['real_action']}"
-              f" / fantôme {r['shadow_action']} ; {verdict}")
-    if right:
-        print(f"  bilan des désaccords corrigés : {dict(right)}")
+              f" / fantôme {r['shadow_action']}{extra} ; {verdict}")
     recent = [r for r in rows if r["timestamp"] >= since and r not in disagree]
     print(f"  accords ou non consultés depuis {when(since)} : {len(recent)}")
 
@@ -188,7 +194,9 @@ def main():
     corpus()
     corrections(since)
     errors(since)
-    history_shadow(since, feedback)
+    llm_shadow("Fantôme LLM + auth + historique + exemples", "llm_context_shadow_log.jsonl", since, feedback)
+    llm_shadow("Ancien fantôme historique (archivé le 27/10)", "llm_history_shadow_log.jsonl", since, feedback,
+               archived=True)
     lookalike_shadow(since)
 
 

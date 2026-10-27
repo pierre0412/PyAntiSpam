@@ -243,10 +243,10 @@ class EmailProcessor:
                     if self.config.get("detection.lookalike_shadow", True):
                         self._log_lookalike_shadow(email_data, decision, email_fingerprint)
 
-                    # LLM verdict with the recipient's history on the sender: observe only.
+                    # LLM verdict with authentication and earlier emails from the sender: observe only.
                     if (raw_message_for_shadow and decision.get("method") == "llm_mistralai"
-                            and self.config.get("llm.history_shadow", False)):
-                        self._log_llm_history_shadow(email_data, decision, email_fingerprint)
+                            and self.config.get("llm.context_shadow", False)):
+                        self._log_llm_context_shadow(email_data, decision, email_fingerprint)
 
                     results["details"].append({
                         "email_id": email_id,
@@ -428,8 +428,20 @@ class EmailProcessor:
         return self.ml_classifier.classify(email_data)
 
     def _llm_classify(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Classify email using LLM"""
-        return self.llm_classifier.classify(email_data)
+        """Classify email using LLM, with the recipient's history on the sender
+        (llm.recipient_history) when rspamd verified the sender's domain. Without
+        rspamd this cycle, no history: the stricter prompt decides."""
+        history = ""
+        if self.config.get("llm.recipient_history", False) and "rspamd_auth" in email_data:
+            try:
+                if recipient_history.is_verified(email_data):
+                    history = recipient_history.history_line(email_data)
+            except Exception as e:
+                self.logger.warning(f"Recipient history unavailable, judged without it: {e}")
+        result = self.llm_classifier.classify(email_data, history)
+        if history:
+            result["recipient_history"] = history
+        return result
 
     def _get_email_fingerprint(self, email_data: Dict[str, Any]) -> str:
         """Generate a unique fingerprint for an email based on its content"""
@@ -508,14 +520,14 @@ class EmailProcessor:
         except Exception as e:
             self.logger.warning(f"Could not log lookalike shadow (non-blocking): {e}")
 
-    def _log_llm_history_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
+    def _log_llm_context_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
                                 email_fingerprint: str):
-        """Ask Mistral again with the recipient's history on the sender's domain
-        (llm/recipient_history.py) and log it beside the real LLM verdict. Only when
-        rspamd verified the sender's domain and there is history; otherwise the
-        record notes why, without an API call. Peek, score, write, then mark.
+        """Ask Mistral again with Auth=verified, the history line and the recipient's
+        earlier emails from the sender (llm/recipient_history.py), and log it beside the
+        real LLM verdict. Only for a sender rspamd verified; otherwise the record notes
+        it, without an API call. Peek, score, write, then mark.
         """
-        index = Path("data/logs/llm_history_shadow_seen.json")
+        index = Path("data/logs/llm_context_shadow_seen.json")
         try:
             action = decision.get("action")
             method = decision.get("method")
@@ -525,15 +537,21 @@ class EmailProcessor:
             if "rspamd_auth" not in email_data:
                 return  # rspamd unavailable this cycle: retried next cycle
             verified = recipient_history.is_verified(email_data)
+            validated = verified and recipient_history.is_validated(email_data)
             line = recipient_history.history_line(email_data) if verified else ""
+            examples = ""
+            if verified:
+                labelled = {fp for fp, v in self.processed_emails_cache.items()
+                            if isinstance(v, dict) and v.get("method") == "user_feedback"}
+                examples = recipient_history.examples_block(email_data, labelled)
 
             shadow = None
-            if line:
-                shadow = self.llm_classifier.classify_with_history(email_data, line)
+            if verified:
+                shadow = self.llm_classifier.classify_with_context(email_data, validated, line, examples)
                 if shadow is None or shadow.get("method") != "llm_mistralai":
                     return  # Mistral unavailable or errored: retried next cycle
 
-            log_path = Path("data/logs/llm_history_shadow_log.jsonl")
+            log_path = Path("data/logs/llm_context_shadow_log.jsonl")
             log_path.parent.mkdir(parents=True, exist_ok=True)
             record = {
                 "timestamp": time.time(),
@@ -542,8 +560,11 @@ class EmailProcessor:
                 "sender_email": email_data.get("sender_email", ""),
                 "real_action": action,
                 "real_confidence": decision.get("confidence"),
+                "real_history": decision.get("recipient_history", ""),
                 "verified": verified,
+                "validated": validated,
                 "history": line,
+                "n_examples": examples.count("\n- ["),
                 "shadow_action": shadow["action"] if shadow else action,
                 "shadow_confidence": shadow["confidence"] if shadow else None,
                 "shadow_reason": shadow["reason"] if shadow else None,
@@ -552,7 +573,7 @@ class EmailProcessor:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             self._mark_logged(email_fingerprint, action, method, index)
         except Exception as e:
-            self.logger.warning(f"Could not log LLM history shadow (non-blocking): {e}")
+            self.logger.warning(f"Could not log LLM context shadow (non-blocking): {e}")
 
     def _log_embedding_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any], email_fingerprint: str):
         """Log the embedding model's spam probability beside the real decision.

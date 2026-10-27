@@ -10,9 +10,13 @@ llm:
                                    # Name Large 4 explicitly: mistral-large-latest still points to Large 3.
   reasoning_effort: "none"         # Mistral reasoning models: "none" answers directly (fast, cheap),
                                    # "high" thinks first (~25 s, ~6x the cost). Omit for other models.
-  # Shadow mode (Mistral + rspamd only): re-ask the LLM with the recipient's own verdicts on
-  # the sender's domain, logged to data/logs/llm_history_shadow_log.jsonl, never acted on.
-  history_shadow: false
+  # Mistral + rspamd only. Give the LLM the recipient's own verdicts on the sender's domain
+  # (counts capped at 10), only when rspamd verified the sender: a spoofed From inherits nothing.
+  recipient_history: false
+  # Shadow mode: re-ask the LLM with Auth=verified, the history and up to 5 earlier emails
+  # from the sender that the recipient labelled. Logged to data/logs/llm_context_shadow_log.jsonl,
+  # never acted on.
+  context_shadow: false
 
   # Cache of LLM verdicts and of user feedback overrides (data/llm_cache.json)
   cache:

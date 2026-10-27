@@ -27,6 +27,7 @@ Mail non lu
 
 - Un mail lu avant le passage du daemon n'est pas traité.
 - Un mail gardé reste non lu.
+- Avec `llm.recipient_history` (Mistral et rspamd), le LLM reçoit vos propres verdicts sur le domaine de l'expéditeur, comptes plafonnés à 10 : « 4 gardés, 0 en spam ». Seulement si rspamd a vérifié l'expéditeur (DKIM ou DMARC aligné) : un expéditeur usurpé n'hérite de rien, et sans rspamd le LLM juge sans historique.
 - Une règle « marketing » écrite à la main peut s'ajouter au Random Forest (`classify_marketing_as_spam`). Elle est **désactivée par défaut** : à poids fixes et sans apprentissage, elle classait en spam des mails de fournisseurs.
 
 ## Apprentissage
@@ -88,6 +89,7 @@ Ils notent un score pour chaque mail, à côté de la vraie décision, sans jama
 | Random Forest (probabilité brute, même quand une liste ou le LLM décide) | toujours | `data/logs/ml_shadow_log.jsonl` |
 | CamemBERT (`sentence-camembert-base` + régression logistique réapprise sur vos reclassements) | `embeddings.enabled` | `data/logs/embedding_shadow_log.jsonl` |
 | rspamd (stack Docker fournie) | `rspamd.enabled` | `data/logs/rspamd_shadow_log.jsonl` |
+| LLM + authentification vérifiée + historique + jusqu'à 5 mails antérieurs du même expéditeur que vous avez classés | `llm.context_shadow` | `data/logs/llm_context_shadow_log.jsonl` |
 | Listes blanche / noire | `lists.shadow` | champ `shadow_list` de `prediction_log.jsonl` |
 
 Le journal `data/logs/prediction_log.jsonl` contient une ligne par décision réelle.
@@ -167,7 +169,7 @@ Ces scripts sont en lecture seule. Ils se lancent depuis le dossier qui contient
 | Script | Rôle |
 |---|---|
 | `live_eval.py` | Mesure sur le trafic réel : votre reclassement fait foi, sinon la décision est tenue pour juste. Compare PyAntiSpam, Random Forest, CamemBERT, leur moyenne et le LLM. `--depuis "AAAA-MM-JJ HH:MM"` donne une série par tranches. |
-| `daily_report.py` | Point quotidien : part du LLM, confirmations tacites en attente, corpus, corrections, erreurs, et les fantômes « LLM + historique » (désaccords comparés à vos corrections) et « sosies ». `--depuis "AAAA-MM-JJ HH:MM"` (défaut : dernières 24 h). |
+| `daily_report.py` | Point quotidien : part du LLM, confirmations tacites en attente, corpus, corrections, erreurs, et les fantômes « LLM + contexte » (désaccords comparés à vos corrections) et « sosies ». `--depuis "AAAA-MM-JJ HH:MM"` (défaut : dernières 24 h). |
 | `shadow_report.py` | Désaccords PyAntiSpam / CamemBERT, avec les verdicts relus à la main (`data/human_verdicts.json`). |
 | `split_eval.py` | Validation croisée groupée par domaine expéditeur sur `training_data.json` : paramètres d'en-tête contre contenu contre CamemBERT. |
 
