@@ -7,7 +7,8 @@ Sections :
 - spams LLM en attente de confirmation tacite (data/pending_llm_spam.json) ;
 - corpus (training_data.json), part des mails avec l'authentification rspamd ;
 - corrections de l'utilisateur (sender_feedback_history.json) ;
-- erreurs du journal (data/logs/pyantispam.log) ;
+- erreurs du journal (data/logs/pyantispam.log), codes HTTP du LLM et alerte
+  quand le compte est en cause (401, 402, 403, 429) ;
 - fantôme « LLM + auth + historique + exemples » : désaccords avec le vrai LLM
   (qui a l'historique), et la correction de l'utilisateur quand il y en a une
   (même empreinte, user_feedback) ; bilan de l'ancien fantôme historique ;
@@ -25,6 +26,7 @@ Usage :
 
 import argparse
 import json
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime
@@ -34,6 +36,10 @@ from pathlib import Path
 DATA = Path("data")
 LOGS = DATA / "logs"
 DAY = 86400
+# HTTP status in LLM API errors ("Status 504" for Mistral, "Error code: 429" for OpenAI/Anthropic).
+LLM_STATUS = re.compile(r"(?:Status|Error code:?)\s*(\d{3})")
+# Account side, retrying does not help: key refused, no credit, quota.
+ACCOUNT_STATUSES = {"401": "clé refusée", "402": "plus de crédit", "403": "accès refusé", "429": "quota ou débit"}
 
 
 def load_jsonl(path: Path):
@@ -117,6 +123,7 @@ def corrections(since: float):
 
 def errors(since: float):
     counts = Counter()
+    statuses = Counter()
     first = {}
     for path in sorted(LOGS.glob("pyantispam.log*"), reverse=True):
         for line in path.open(encoding="utf-8", errors="replace"):
@@ -130,9 +137,17 @@ def errors(since: float):
                 msg = line.split(" - ", 3)[-1].strip()[:110]
                 counts[msg] += 1
                 first.setdefault(msg, ts)
+                status = LLM_STATUS.search(line) if "classification error" in line else None
+                if status:
+                    statuses[status.group(1)] += 1
     print(f"\n== Erreurs : {sum(counts.values())}")
     for msg, n in counts.most_common(15):
         print(f"  {n:3} × (dès {when(first[msg])}) {msg}")
+    if statuses:
+        print("  codes HTTP du LLM : " + ", ".join(f"{code} × {n}" for code, n in sorted(statuses.items())))
+    for code in sorted(set(statuses) & set(ACCOUNT_STATUSES)):
+        print(f"  ⚠️  ALERTE LLM {code} ({ACCOUNT_STATUSES[code]}) : vérifier le compte du fournisseur ;"
+              f" les mails concernés sont gardés")
 
 
 def llm_shadow(title: str, log_name: str, since: float, feedback, archived: bool = False):
