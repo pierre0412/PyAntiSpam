@@ -6,8 +6,9 @@
 # MISTRAL_API_KEY, OPENAI_API_KEY or ANTHROPIC_API_KEY.
 llm:
   provider: "mistral"              # mistral, openai, anthropic
-  model: "mistral-large-4"         # e.g. "gpt-4o-mini" (openai), "claude-3-haiku-20240307" (anthropic)
-                                   # Name Large 4 explicitly: mistral-large-latest still points to Large 3.
+  model: "deepseek-v4-1-flash-1017"  # served by Mistral, no reasoning; e.g. "gpt-4o-mini" (openai)
+                                   # Replayed 29/10: every known phishing caught, fewest false positives,
+                                   # ~0.5 $ per 1,000 emails. mistral-large-4 now always reasons (~4 $).
   reasoning_effort: "minimal"      # Mistral reasoning models: minimal, low, medium or high. Omit for other models.
                                    # Large 4 refuses "none" since 29/10/2026, and even "minimal" thinks
                                    # 1,400-2,000 tokens on a real email (~10-20 s).
