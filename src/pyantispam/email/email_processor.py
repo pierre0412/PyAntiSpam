@@ -565,6 +565,7 @@ class EmailProcessor:
                 "validated": validated,
                 "history": line,
                 "n_examples": examples.count("\n- ["),
+                "shadow_model": shadow.get("model") if shadow else None,
                 "shadow_action": shadow["action"] if shadow else action,
                 "shadow_confidence": shadow["confidence"] if shadow else None,
                 "shadow_reason": shadow["reason"] if shadow else None,
@@ -774,6 +775,7 @@ class EmailProcessor:
                 "action": action,
                 "confidence": decision.get("confidence"),
                 "method": method,
+                "model": decision.get("model"),
                 "shadow_list": decision.get("shadow_list"),
             }
 

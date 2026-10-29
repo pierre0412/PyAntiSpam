@@ -525,7 +525,8 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                     "action": "SPAM" if is_spam else "KEEP",
                     "reason": f"MistralAI: {reason}",
                     "confidence": confidence,
-                    "method": "llm_mistralai"
+                    "method": "llm_mistralai",
+                    "model": model
                 }
 
             except json.JSONDecodeError:
@@ -535,7 +536,8 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                     "action": "SPAM" if is_spam else "KEEP",
                     "reason": f"MistralAI: {result_text[:100]}",
                     "confidence": 0.7,
-                    "method": "llm_mistralai"
+                    "method": "llm_mistralai",
+                    "model": model
                 }
 
         except Exception as e:

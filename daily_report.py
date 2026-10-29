@@ -86,9 +86,9 @@ def llm_share(predictions, serie: float):
 
 def decisions(predictions, since: float):
     print(f"\n== Décisions depuis {when(since)}")
-    counts = Counter((r.get("method"), r["action"]) for r in predictions if r["timestamp"] >= since)
-    for (method, action), n in counts.most_common():
-        print(f"  {method:20} {action:5} {n}")
+    counts = Counter((r.get("method"), r["action"], r.get("model")) for r in predictions if r["timestamp"] >= since)
+    for (method, action, model), n in counts.most_common():
+        print(f"  {method:20} {action:5} {n}" + (f"  ({model})" if model else ""))
 
 
 def pending():
