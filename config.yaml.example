@@ -9,7 +9,7 @@ llm:
   model: "deepseek-v4-1-flash-1017"  # served by Mistral, no reasoning; e.g. "gpt-4o-mini" (openai)
                                    # Replayed 29/10: every known phishing caught, fewest false positives,
                                    # ~0.5 $ per 1,000 emails. mistral-large-4 now always reasons (~4 $).
-  reasoning_effort: "minimal"      # Mistral reasoning models: minimal, low, medium or high. Omit for other models.
+  reasoning_effort: "none"         # Mistral API: none (DeepSeek, Medium 3.5, Small 4), low, medium, high.
                                    # Large 4 refuses "none" since 29/10/2026, and even "minimal" thinks
                                    # 1,400-2,000 tokens on a real email (~10-20 s).
   max_tokens: 4000                 # Mistral: reasoning counts in it; too low and the answer comes back empty.
