@@ -481,8 +481,10 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
 
             system_prompt = system_prompt or MISTRAL_SYSTEM_PROMPT
             # Reasoning models (mistral-large-4) think before answering by default:
-            # "none" answers directly (~1.5 s, ~70 tokens instead of ~25 s, ~2,000).
+            # "minimal" answers almost directly (~1.5 s, ~80 tokens instead of ~25 s, ~2,000).
             reasoning_effort = self.config.get("llm.reasoning_effort")
+            # Reasoning tokens count against max_tokens: too low and the answer comes back empty.
+            max_tokens = int(self.config.get("llm.max_tokens", 2000))
             user_prompt = (
                 "Analyse l'email ci-dessous et rends UNIQUEMENT le JSON (un seul objet).\n\n"
                 f"{email_text}\n\n"
@@ -498,7 +500,7 @@ DECISION RULE: When uncertain, PREFER marking as spam for user safety. Only mark
                 response_format={"type": "json_object"},
                 stream=False,
                 temperature=0.1,
-                max_tokens=400,
+                max_tokens=max_tokens,
                 **({"reasoning_effort": reasoning_effort} if reasoning_effort else {})
             )
 

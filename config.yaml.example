@@ -8,8 +8,10 @@ llm:
   provider: "mistral"              # mistral, openai, anthropic
   model: "mistral-large-4"         # e.g. "gpt-4o-mini" (openai), "claude-3-haiku-20240307" (anthropic)
                                    # Name Large 4 explicitly: mistral-large-latest still points to Large 3.
-  reasoning_effort: "none"         # Mistral reasoning models: "none" answers directly (fast, cheap),
+  reasoning_effort: "minimal"      # Mistral reasoning models: "minimal" answers almost directly (~1.5 s),
                                    # "high" thinks first (~25 s, ~6x the cost). Omit for other models.
+                                   # Large 4 refuses "none" since 29/10/2026.
+  max_tokens: 2000                 # Mistral: reasoning counts in it; 400 left "low" answers empty.
   # Mistral + rspamd only. Give the LLM the recipient's own verdicts on the sender's domain
   # (counts capped at 10), only when rspamd verified the sender: a spoofed From inherits nothing.
   recipient_history: false
