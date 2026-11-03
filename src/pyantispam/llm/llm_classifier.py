@@ -61,7 +61,7 @@ HISTORY_RULE = (
 _STRICT_LINE = "Be STRICT: when in doubt between spam/legitimate, prefer marking as spam for safety.\n"
 MISTRAL_HISTORY_PROMPT = MISTRAL_SYSTEM_PROMPT.replace(_STRICT_LINE, HISTORY_RULE + _STRICT_LINE)
 
-# Shadow variant (llm.context_shadow): history, plus rspamd's authentication verdict
+# llm.sender_context (shadow first, real since 03/11): history, plus rspamd's authentication verdict
 # and the recipient's earlier emails from the sender. Replayed on 26/10: half the
 # false positives of the history prompt, every dangerous email still caught.
 AUTH_RULE = (
@@ -173,8 +173,8 @@ class LLMClassifier:
 
     def classify_with_context(self, email_data: Dict[str, Any], validated: bool, history: str,
                               examples: str) -> Optional[Dict[str, Any]]:
-        """Shadow only, for a sender rspamd verified: Mistral verdict with Auth=verified,
-        the history line and the examples block. For a domain the recipient validated,
+        """For a sender rspamd verified (llm.sender_context, or its shadow): Mistral verdict
+        with Auth=verified, the history line and the examples block. For a domain the recipient validated,
         the brand and Reply-To heuristics are neutralized (the domain is the real one).
         None when Mistral is not the configured provider or not available."""
         provider = self.config.get("llm.provider", "openai").lower()

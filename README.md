@@ -28,6 +28,7 @@ Mail non lu
 - Un mail lu avant le passage du daemon n'est pas traité.
 - Un mail gardé reste non lu.
 - Avec `llm.recipient_history` (Mistral et rspamd), le LLM reçoit vos propres verdicts sur le domaine de l'expéditeur, comptes plafonnés à 10 : « 4 gardés, 0 en spam ». Seulement si rspamd a vérifié l'expéditeur (DKIM ou DMARC aligné) : un expéditeur usurpé n'hérite de rien, et sans rspamd le LLM juge sans historique.
+- Avec `llm.sender_context`, un expéditeur vérifié est aussi jugé avec la mention « authentification vérifiée » et jusqu'à 5 de ses mails antérieurs que vous avez classés. Pour un domaine que vous avez validé (gardé, jamais mis en spam), les alertes « marque différente » et « Reply-To différent » sont neutralisées. Les règles sur le contenu (liens, demandes d'identifiants, urgence) restent appliquées.
 - Une règle « marketing » écrite à la main peut s'ajouter au Random Forest (`classify_marketing_as_spam`). Elle est **désactivée par défaut** : à poids fixes et sans apprentissage, elle classait en spam des mails de fournisseurs.
 
 ## Apprentissage
@@ -89,7 +90,7 @@ Ils notent un score pour chaque mail, à côté de la vraie décision, sans jama
 | Random Forest (probabilité brute, même quand une liste ou le LLM décide) | toujours | `data/logs/ml_shadow_log.jsonl` |
 | CamemBERT (`sentence-camembert-base` + régression logistique réapprise sur vos reclassements) | `embeddings.enabled` | `data/logs/embedding_shadow_log.jsonl` |
 | rspamd (stack Docker fournie) | `rspamd.enabled` | `data/logs/rspamd_shadow_log.jsonl` |
-| LLM + authentification vérifiée + historique + jusqu'à 5 mails antérieurs du même expéditeur que vous avez classés | `llm.context_shadow` | `data/logs/llm_context_shadow_log.jsonl` |
+| LLM avec l'autre prompt : contexte complet (authentification, historique, mails antérieurs) si `llm.sender_context` est désactivé, historique seul s'il est activé | `llm.context_shadow` | `data/logs/llm_context_shadow_log.jsonl` ou `data/logs/llm_history_only_shadow_log.jsonl` |
 | Listes blanche / noire | `lists.shadow` | champ `shadow_list` de `prediction_log.jsonl` |
 
 Le journal `data/logs/prediction_log.jsonl` contient une ligne par décision réelle.

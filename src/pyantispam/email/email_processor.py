@@ -5,7 +5,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from ..config import ConfigManager
 from .email_client import EmailClient
 from . import decided_index
@@ -243,7 +243,7 @@ class EmailProcessor:
                     if self.config.get("detection.lookalike_shadow", True):
                         self._log_lookalike_shadow(email_data, decision, email_fingerprint)
 
-                    # LLM verdict with authentication and earlier emails from the sender: observe only.
+                    # LLM verdict with the other prompt (with or without auth and examples): observe only.
                     if (raw_message_for_shadow and decision.get("method") == "llm_mistralai"
                             and self.config.get("llm.context_shadow", False)):
                         self._log_llm_context_shadow(email_data, decision, email_fingerprint)
@@ -427,17 +427,37 @@ class EmailProcessor:
         """Classify email using ML model"""
         return self.ml_classifier.classify(email_data)
 
+    def _sender_context(self, email_data: Dict[str, Any]) -> Tuple[bool, bool, str, str]:
+        """(verified, validated, history line, examples block) for the LLM, all empty
+        unless rspamd verified the sender: a spoofed From inherits nothing."""
+        if not recipient_history.is_verified(email_data):
+            return False, False, "", ""
+        labelled = {fp for fp, v in self.processed_emails_cache.items()
+                    if isinstance(v, dict) and v.get("method") == "user_feedback"}
+        return (True, recipient_history.is_validated(email_data),
+                recipient_history.history_line(email_data),
+                recipient_history.examples_block(email_data, labelled))
+
     def _llm_classify(self, email_data: Dict[str, Any]) -> Dict[str, Any]:
         """Classify email using LLM, with the recipient's history on the sender
-        (llm.recipient_history) when rspamd verified the sender's domain. Without
-        rspamd this cycle, no history: the stricter prompt decides."""
+        (llm.recipient_history) when rspamd verified the sender's domain. With
+        llm.sender_context, such a sender is judged with Auth=verified, the history and
+        the recipient's earlier emails from it (classify_with_context). Without rspamd
+        this cycle, neither: the stricter prompt decides."""
         history = ""
-        if self.config.get("llm.recipient_history", False) and "rspamd_auth" in email_data:
+        use_context = self.config.get("llm.sender_context", False)
+        if (use_context or self.config.get("llm.recipient_history", False)) and "rspamd_auth" in email_data:
             try:
-                if recipient_history.is_verified(email_data):
-                    history = recipient_history.history_line(email_data)
+                verified, validated, history, examples = self._sender_context(email_data)
+                if use_context and verified:
+                    result = self.llm_classifier.classify_with_context(email_data, validated, history, examples)
+                    if result is not None:
+                        result["recipient_history"] = history
+                        result["sender_context"] = True
+                        return result
             except Exception as e:
-                self.logger.warning(f"Recipient history unavailable, judged without it: {e}")
+                history = ""
+                self.logger.warning(f"Sender context unavailable, judged without it: {e}")
         result = self.llm_classifier.classify(email_data, history)
         if history:
             result["recipient_history"] = history
@@ -522,12 +542,16 @@ class EmailProcessor:
 
     def _log_llm_context_shadow(self, email_data: Dict[str, Any], decision: Dict[str, Any],
                                 email_fingerprint: str):
-        """Ask Mistral again with Auth=verified, the history line and the recipient's
-        earlier emails from the sender (llm/recipient_history.py), and log it beside the
-        real LLM verdict. Only for a sender rspamd verified; otherwise the record notes
-        it, without an API call. Peek, score, write, then mark.
+        """Ask Mistral again with the other prompt and log it beside the real LLM verdict:
+        with Auth=verified, the history line and the recipient's earlier emails from the
+        sender (llm/recipient_history.py), or, once llm.sender_context makes that the
+        real verdict, with the history line alone (the previous real prompt). Only for a
+        sender rspamd verified; otherwise the record notes it, without an API call.
+        Peek, score, write, then mark.
         """
-        index = Path("data/logs/llm_context_shadow_seen.json")
+        context_real = self.config.get("llm.sender_context", False)
+        name = "llm_history_only_shadow" if context_real else "llm_context_shadow"
+        index = Path(f"data/logs/{name}_seen.json")
         try:
             action = decision.get("action")
             method = decision.get("method")
@@ -536,22 +560,18 @@ class EmailProcessor:
 
             if "rspamd_auth" not in email_data:
                 return  # rspamd unavailable this cycle: retried next cycle
-            verified = recipient_history.is_verified(email_data)
-            validated = verified and recipient_history.is_validated(email_data)
-            line = recipient_history.history_line(email_data) if verified else ""
-            examples = ""
-            if verified:
-                labelled = {fp for fp, v in self.processed_emails_cache.items()
-                            if isinstance(v, dict) and v.get("method") == "user_feedback"}
-                examples = recipient_history.examples_block(email_data, labelled)
+            verified, validated, line, examples = self._sender_context(email_data)
 
             shadow = None
             if verified:
-                shadow = self.llm_classifier.classify_with_context(email_data, validated, line, examples)
+                if context_real:
+                    shadow = self.llm_classifier.classify(email_data, line)
+                else:
+                    shadow = self.llm_classifier.classify_with_context(email_data, validated, line, examples)
                 if shadow is None or shadow.get("method") != "llm_mistralai":
                     return  # Mistral unavailable or errored: retried next cycle
 
-            log_path = Path("data/logs/llm_context_shadow_log.jsonl")
+            log_path = Path(f"data/logs/{name}_log.jsonl")
             log_path.parent.mkdir(parents=True, exist_ok=True)
             record = {
                 "timestamp": time.time(),

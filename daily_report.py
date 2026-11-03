@@ -209,7 +209,10 @@ def main():
     corpus()
     corrections(since)
     errors(since)
-    llm_shadow("Fantôme LLM + auth + historique + exemples", "llm_context_shadow_log.jsonl", since, feedback)
+    llm_shadow("Fantôme LLM historique seul (ancien prompt réel)", "llm_history_only_shadow_log.jsonl", since,
+               feedback)
+    llm_shadow("Fantôme LLM + auth + historique + exemples (en production le 03/11)", "llm_context_shadow_log.jsonl",
+               since, feedback, archived=True)
     llm_shadow("Ancien fantôme historique (archivé le 27/10)", "llm_history_shadow_log.jsonl", since, feedback,
                archived=True)
     lookalike_shadow(since)

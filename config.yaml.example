@@ -16,9 +16,14 @@ llm:
   # Mistral + rspamd only. Give the LLM the recipient's own verdicts on the sender's domain
   # (counts capped at 10), only when rspamd verified the sender: a spoofed From inherits nothing.
   recipient_history: false
-  # Shadow mode: re-ask the LLM with Auth=verified, the history and up to 5 earlier emails
-  # from the sender that the recipient labelled. Logged to data/logs/llm_context_shadow_log.jsonl,
-  # never acted on.
+  # Mistral + rspamd only. For a verified sender, judge with Auth=verified, the history and up
+  # to 5 earlier emails from the sender that the recipient labelled; for a domain the recipient
+  # validated (kept, never marked spam), the brand and Reply-To heuristics are neutralized.
+  # Shadow-measured 27/10-03/11: 3 disagreements out of 50, all towards keeping, no danger let through.
+  sender_context: false
+  # Shadow mode: re-ask the LLM with the other prompt and log it, never acted on.
+  # sender_context off: the context prompt, in data/logs/llm_context_shadow_log.jsonl.
+  # sender_context on: the history-only prompt, in data/logs/llm_history_only_shadow_log.jsonl.
   context_shadow: false
 
   # Cache of LLM verdicts and of user feedback overrides (data/llm_cache.json)
