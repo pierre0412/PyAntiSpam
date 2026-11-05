@@ -4,12 +4,18 @@ import re
 import logging
 import time
 import math
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 from collections import Counter
 from pathlib import Path
 import json
 import string
 from datetime import datetime
+
+from ..llm.recipient_history import _sender_key, is_verified
+
+# Domain counts are capped like the LLM's history line: counters inherited from
+# before October 2026 run into the hundreds for a single address.
+DOMAIN_COUNT_CAP = 10
 
 
 class FeatureExtractor:
@@ -20,6 +26,8 @@ class FeatureExtractor:
         self.sender_history_file = Path("data/sender_feedback_history.json")
         self.sender_history_cache = None
         self.sender_history_cache_time = 0
+        self.domain_counts_cache: Dict[str, Tuple[int, int]] = {}
+        self.address_counts_cache: Dict[str, Tuple[int, int]] = {}
 
         # Common spam keywords
         self.spam_keywords = {
@@ -38,8 +46,9 @@ class FeatureExtractor:
         # Suspicious TLDs
         self.suspicious_tlds = ['.tk', '.ml', '.ga', '.cf', '.top', '.click', '.download']
 
-    def extract_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
-        """Extract features from email data"""
+    def extract_features(self, email_data: Dict[str, Any], own_label: Optional[bool] = None) -> Dict[str, float]:
+        """Extract features from email data. own_label: the sample's label when training
+        (True = spam), so the sender history leaves that sample's own verdict out."""
         features = {}
 
         # Email metadata features
@@ -59,7 +68,7 @@ class FeatureExtractor:
         features.update(self._extract_header_features(email_data))
 
         # NEW: Sender history features (critical for recurring patterns)
-        features.update(self._extract_sender_history_features(email_data))
+        features.update(self._extract_sender_history_features(email_data, own_label))
 
         # NEW: Temporal features
         features.update(self._extract_temporal_features(email_data))
@@ -373,48 +382,62 @@ class FeatureExtractor:
 
         return features
 
-    def _extract_sender_history_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
-        """Extract features from sender feedback history"""
+    def _extract_sender_history_features(self, email_data: Dict[str, Any],
+                                         own_label: Optional[bool] = None) -> Dict[str, float]:
+        """Extract features from sender feedback history, per exact address and per
+        registrable domain (as the LLM's history line). When training (own_label set),
+        the sample's own verdict is left out: at prediction time an email is never in
+        the history yet. Measured 05/11 (grouped, random and temporal CV): fewer errors
+        when the RF decides alone; the spams it then keeps are newsletters from known,
+        authenticated domains."""
         features = {}
         sender_email = email_data.get('sender_email', '').lower()
 
         # Load sender history with caching
-        history = self._load_sender_history_cached()
-        sender_stats = history.get(sender_email, {})
+        # Keyed in lower case: the history file keeps the From's case
+        # (News@InsideApple.Apple.com), which an exact lookup missed.
+        self._load_sender_history_cached()
+        ham_count, spam_count = self.address_counts_cache.get(sender_email, (0, 0))
+        if own_label is True:
+            spam_count = max(spam_count - 1, 0)
+        elif own_label is False:
+            ham_count = max(ham_count - 1, 0)
+        total_feedbacks = spam_count + ham_count
 
-        if sender_stats:
-            spam_count = sender_stats.get('spam_count', 0)
-            ham_count = sender_stats.get('ham_count', 0)
-            total_feedbacks = spam_count + ham_count
+        # Spam ratio (most critical feature)
+        features['sender_spam_ratio'] = spam_count / total_feedbacks if total_feedbacks > 0 else 0.0
+        features['sender_total_feedbacks'] = float(total_feedbacks)
+        # Always 0: first_seen is stored as a timestamp, and reading it for real
+        # (measured 05/11) sent more legitimate emails to spam. Kept so the
+        # feature set, and the trained model, stay the same.
+        features['sender_days_since_first'] = 0.0
 
-            # Spam ratio (most critical feature)
-            features['sender_spam_ratio'] = spam_count / total_feedbacks if total_feedbacks > 0 else 0.0
-            features['sender_total_feedbacks'] = float(total_feedbacks)
+        # Recurring spammer indicator
+        features['sender_is_recurring_spammer'] = 1.0 if spam_count >= 3 else 0.0
+        features['sender_is_recurring_ham'] = 1.0 if ham_count >= 3 else 0.0
 
-            # Time-based features
-            first_seen = sender_stats.get('first_seen')
-            if first_seen:
-                try:
-                    first_date = datetime.fromisoformat(first_seen)
-                    days_since_first = (datetime.now() - first_date).days
-                    features['sender_days_since_first'] = float(days_since_first)
-                except:
-                    features['sender_days_since_first'] = 0.0
-            else:
-                features['sender_days_since_first'] = 0.0
-
-            # Recurring spammer indicator
-            features['sender_is_recurring_spammer'] = 1.0 if spam_count >= 3 else 0.0
-            features['sender_is_recurring_ham'] = 1.0 if ham_count >= 3 else 0.0
+        domain_ham, domain_spam = self._domain_counts(email_data)
+        if own_label is True:
+            domain_spam = max(domain_spam - 1, 0)
+        elif own_label is False:
+            domain_ham = max(domain_ham - 1, 0)
+        # Legitimate verdicts only count for a sender rspamd verified: a spoofed From
+        # inherits nothing. Older training samples predate rspamd: their label is the
+        # user's own verdict, so their history counts as is. Spam verdicts always count.
+        if 'rspamd_auth' in email_data:
+            verified = is_verified(email_data)
         else:
-            # Unknown sender
-            features['sender_spam_ratio'] = 0.0
-            features['sender_total_feedbacks'] = 0.0
-            features['sender_days_since_first'] = 0.0
-            features['sender_is_recurring_spammer'] = 0.0
-            features['sender_is_recurring_ham'] = 0.0
+            verified = own_label is not None
+        features['sender_domain_ham'] = float(min(domain_ham, DOMAIN_COUNT_CAP)) if verified else 0.0
+        features['sender_domain_spam'] = float(min(domain_spam, DOMAIN_COUNT_CAP))
 
         return features
+
+    def _domain_counts(self, email_data: Dict[str, Any]) -> Tuple[int, int]:
+        """(legitimate, spam) verdicts of the recipient on the sender's registrable
+        domain, or on the exact address for shared platforms (llm/recipient_history.py)."""
+        self._load_sender_history_cached()
+        return self.domain_counts_cache.get(_sender_key(email_data)[0], (0, 0))
 
     def _load_sender_history_cached(self) -> Dict[str, Any]:
         """Load sender history with 60-second cache"""
@@ -430,6 +453,18 @@ class FeatureExtractor:
             else:
                 self.sender_history_cache = {}
             self.sender_history_cache_time = now
+            counts: Dict[str, Tuple[int, int]] = {}
+            addresses: Dict[str, Tuple[int, int]] = {}
+            for address, stats in self.sender_history_cache.items():
+                ham, spam = addresses.get(address.lower(), (0, 0))
+                addresses[address.lower()] = (ham + stats.get("ham_count", 0), spam + stats.get("spam_count", 0))
+                key = _sender_key({"sender_email": address,
+                                   "sender_domain": stats.get("sender_domain") or address.split("@")[-1]})[0]
+                ham, spam = counts.get(key, (0, 0))
+                counts[key] = (ham + stats.get("ham_count", 0) + stats.get("whitelist_count", 0),
+                               spam + stats.get("spam_count", 0) + stats.get("blacklist_count", 0))
+            self.domain_counts_cache = counts
+            self.address_counts_cache = addresses
         return self.sender_history_cache
 
     def _extract_temporal_features(self, email_data: Dict[str, Any]) -> Dict[str, float]:
@@ -621,7 +656,8 @@ class FeatureExtractor:
         # Sender history features
         feature_names.extend([
             'sender_spam_ratio', 'sender_total_feedbacks', 'sender_days_since_first',
-            'sender_is_recurring_spammer', 'sender_is_recurring_ham'
+            'sender_is_recurring_spammer', 'sender_is_recurring_ham',
+            'sender_domain_ham', 'sender_domain_spam'
         ])
 
         # Temporal features

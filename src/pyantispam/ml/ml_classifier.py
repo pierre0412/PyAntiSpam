@@ -195,7 +195,8 @@ class MLClassifier:
             X, y, sample_weights = [], [], []
 
             for sample in samples:
-                features = self.feature_extractor.extract_features(sample['email_data'])
+                features = self.feature_extractor.extract_features(sample['email_data'],
+                                                               own_label=bool(sample['is_spam']))
                 feature_vector = self._features_to_vector(features)
                 X.append(feature_vector)
                 y.append(1 if sample['is_spam'] else 0)

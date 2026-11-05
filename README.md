@@ -72,9 +72,9 @@ Après `auto_blacklist_threshold` reclassements « spam » (3 par défaut) pour 
 
 ## Le Random Forest
 
-81 paramètres extraits de chaque mail :
+83 paramètres extraits de chaque mail :
 
-- **Expéditeur (11)** : historique de vos corrections (ratio spam, nombre de feedbacks, récurrence), forme de l'adresse, TLD suspect
+- **Expéditeur (13)** : historique de vos corrections sur l'adresse (ratio spam, nombre de feedbacks, récurrence) et sur tout le domaine (légitimes, spams, plafonnés à 10), forme de l'adresse, TLD suspect. Les « légitimes » du domaine ne comptent que si rspamd a vérifié l'expéditeur : un expéditeur usurpé n'hérite de rien. À l'entraînement, chaque mail est retiré de l'historique qui le décrit, comme un mail nouveau qui n'y figure pas encore.
 - **Sujet (15)** et **contenu (25)** : longueur, majuscules, ponctuation, mots-clés (urgence, argent, phishing, marketing), liens, liens de suivi, boutons d'action, prix
 - **Texte (5)** : entropie, diversité lexicale, répétitions
 - **HTML (5)** : ratio HTML/texte, images, formulaires, scripts, densité de liens
